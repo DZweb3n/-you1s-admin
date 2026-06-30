@@ -1,5 +1,8 @@
 const { createServer } = require('http')
 const { parse } = require('url')
+const { execSync } = require('child_process')
+const path = require('path')
+const fs = require('fs')
 const next = require('next')
 
 // Prevent Node.js 22 from killing the process on any unhandled rejection
@@ -9,10 +12,23 @@ process.on('unhandledRejection', (reason) => {
 
 const port = parseInt(process.env.PORT || '3001', 10)
 
+// Auto-build if .next directory doesn't exist
+const buildDir = path.join(__dirname, '.next')
+if (!fs.existsSync(buildDir)) {
+  console.log('> .next not found — running next build...')
+  try {
+    execSync('npx next build', { stdio: 'inherit', cwd: __dirname })
+    console.log('> Build complete')
+  } catch (err) {
+    console.error('[server] Build failed:', err.message)
+    process.exit(1)
+  }
+}
+
 const app = next({ dev: false })
 const handle = app.getRequestHandler()
 
-console.log('> Preparing Next.js on port', port)
+console.log('> Starting server on port', port)
 
 app.prepare()
   .then(() => {
