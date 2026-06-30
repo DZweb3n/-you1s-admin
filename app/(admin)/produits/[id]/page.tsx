@@ -1,37 +1,69 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Save, Upload, X } from 'lucide-react'
+import { ArrowLeft, Save, Loader2 } from 'lucide-react'
 import Header from '@/components/Header'
-import { DEMO_PRODUCTS } from '@/lib/utils'
+import { createClient } from '@/lib/supabase'
+import { slugify } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
 const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45', '46']
-const CATEGORIES = ['Sneakers', 'Hauts', 'Bas', 'Accessoires', 'Vestes', 'Chaussettes']
+
+type Category = { id: string; name: string }
 
 export default function ProduitEditPage() {
   const { id } = useParams()
   const router = useRouter()
   const isNew = id === 'nouveau'
+  const supabase = createClient()
 
-  const existing = !isNew ? DEMO_PRODUCTS.find(p => p.id === id) : null
+  const [categories, setCategories] = useState<Category[]>([])
+  const [loading, setLoading] = useState(!isNew)
+  const [saving, setSaving] = useState(false)
 
   const [form, setForm] = useState({
-    name: existing?.name || '',
-    brand: existing?.brand || '',
+    name: '',
+    brand: '',
     description: '',
-    price: existing?.price?.toString() || '',
+    price: '',
     comparePrice: '',
     costPrice: '',
     sku: '',
-    category: existing?.category || '',
-    stock: existing?.stock?.toString() || '0',
-    active: existing?.active ?? true,
-    sizes: ['40', '41', '42', '43'] as string[],
-    images: [] as string[],
+    category_id: '',
+    stock: '0',
+    active: true,
+    sizes: [] as string[],
+    colors: [] as string[],
   })
-  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    async function init() {
+      const { data: cats } = await supabase.from('categories').select('id, name').eq('active', true).order('name')
+      setCategories(cats || [])
+
+      if (!isNew) {
+        const { data, error } = await supabase.from('products').select('*').eq('id', id).single()
+        if (error || !data) { toast.error('Produit introuvable'); router.push('/produits'); return }
+        setForm({
+          name: data.name || '',
+          brand: data.brand || '',
+          description: data.description || '',
+          price: data.price?.toString() || '',
+          comparePrice: data.compare_price?.toString() || '',
+          costPrice: data.cost_price?.toString() || '',
+          sku: data.sku || '',
+          category_id: data.category_id || '',
+          stock: data.stock?.toString() || '0',
+          active: data.active ?? true,
+          sizes: Array.isArray(data.sizes) ? data.sizes : [],
+          colors: Array.isArray(data.colors) ? data.colors : [],
+        })
+        setLoading(false)
+      }
+    }
+    init()
+  }, [])
 
   function update(field: string, value: any) {
     setForm(prev => ({ ...prev, [field]: value }))
@@ -40,20 +72,56 @@ export default function ProduitEditPage() {
   function toggleSize(size: string) {
     setForm(prev => ({
       ...prev,
-      sizes: prev.sizes.includes(size)
-        ? prev.sizes.filter(s => s !== size)
-        : [...prev.sizes, size]
+      sizes: prev.sizes.includes(size) ? prev.sizes.filter(s => s !== size) : [...prev.sizes, size]
     }))
   }
 
   async function handleSave() {
     if (!form.name || !form.price) return toast.error('Nom et prix obligatoires')
     setSaving(true)
-    await new Promise(r => setTimeout(r, 800))
-    toast.success(isNew ? 'Produit créé !' : 'Produit mis à jour !')
-    setSaving(false)
-    if (isNew) router.push('/produits')
+
+    const payload = {
+      name: form.name,
+      slug: slugify(form.name),
+      brand: form.brand,
+      description: form.description,
+      price: parseFloat(form.price),
+      compare_price: form.comparePrice ? parseFloat(form.comparePrice) : null,
+      cost_price: form.costPrice ? parseFloat(form.costPrice) : null,
+      sku: form.sku || null,
+      category_id: form.category_id || null,
+      stock: parseInt(form.stock) || 0,
+      active: form.active,
+      sizes: form.sizes,
+      colors: form.colors,
+    }
+
+    if (isNew) {
+      const { error } = await supabase.from('products').insert(payload)
+      if (error) { toast.error('Erreur lors de la création'); setSaving(false); return }
+      toast.success('Produit créé !')
+      router.push('/produits')
+    } else {
+      const { error } = await supabase.from('products').update(payload).eq('id', id)
+      if (error) { toast.error('Erreur lors de la sauvegarde'); setSaving(false); return }
+      toast.success('Produit mis à jour !')
+      setSaving(false)
+    }
   }
+
+  async function handleDelete() {
+    if (!confirm('Supprimer ce produit ? Cette action est irréversible.')) return
+    const { error } = await supabase.from('products').delete().eq('id', id)
+    if (error) { toast.error('Erreur lors de la suppression'); return }
+    toast.success('Produit supprimé')
+    router.push('/produits')
+  }
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-32">
+      <Loader2 size={24} className="animate-spin text-zinc-500" />
+    </div>
+  )
 
   return (
     <div>
@@ -68,7 +136,6 @@ export default function ProduitEditPage() {
       </div>
 
       <div className="grid grid-cols-3 gap-6">
-        {/* Main form */}
         <div className="col-span-2 space-y-4">
           {/* Infos générales */}
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
@@ -101,7 +168,7 @@ export default function ProduitEditPage() {
             </div>
           </div>
 
-          {/* Pricing */}
+          {/* Prix */}
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
             <h2 className="text-white font-semibold text-sm mb-5">Prix</h2>
             <div className="grid grid-cols-3 gap-4">
@@ -147,34 +214,10 @@ export default function ProduitEditPage() {
               ))}
             </div>
           </div>
-
-          {/* Images */}
-          <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
-            <h2 className="text-white font-semibold text-sm mb-2">Images</h2>
-            <p className="text-xs text-zinc-500 mb-5">Glissez-déposez les images ou cliquez pour importer</p>
-            <div className="grid grid-cols-4 gap-3">
-              <label className="aspect-square rounded-xl bg-[#1a1a1a] border-2 border-dashed border-[#2a2a2a] flex flex-col items-center justify-center cursor-pointer hover:border-[#444] transition-colors group col-span-1">
-                <Upload size={20} className="text-zinc-600 group-hover:text-zinc-400 transition-colors mb-2" />
-                <span className="text-xs text-zinc-600 group-hover:text-zinc-400 transition-colors">Ajouter</span>
-                <input type="file" accept="image/*" multiple className="hidden" onChange={() => toast.success('Connectez Supabase Storage pour l\'upload')} />
-              </label>
-              {form.images.map((img, i) => (
-                <div key={i} className="aspect-square rounded-xl bg-[#1a1a1a] border border-[#2a2a2a] relative group overflow-hidden">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={img} alt="" className="w-full h-full object-cover" />
-                  <button onClick={() => update('images', form.images.filter((_, j) => j !== i))}
-                    className="absolute top-2 right-2 w-6 h-6 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
 
         {/* Sidebar */}
         <div className="space-y-4">
-          {/* Status */}
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
             <h2 className="text-white font-semibold text-sm mb-5">Statut</h2>
             <div className="flex items-center justify-between">
@@ -184,48 +227,35 @@ export default function ProduitEditPage() {
                 <div className={`absolute top-0.5 w-5 h-5 rounded-full transition-transform bg-black ${form.active ? 'translate-x-5' : 'translate-x-0.5'}`} />
               </button>
             </div>
-            <p className="text-xs text-zinc-600 mt-2">
-              {form.active ? 'Visible sur le site' : 'Masqué du site'}
-            </p>
+            <p className="text-xs text-zinc-600 mt-2">{form.active ? 'Visible sur le site' : 'Masqué du site'}</p>
           </div>
 
-          {/* Catégorie */}
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
             <h2 className="text-white font-semibold text-sm mb-5">Catégorie</h2>
-            <select value={form.category} onChange={e => update('category', e.target.value)}
+            <select value={form.category_id} onChange={e => update('category_id', e.target.value)}
               className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors">
               <option value="">Choisir...</option>
-              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
 
-          {/* Stock */}
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
             <h2 className="text-white font-semibold text-sm mb-5">Stock</h2>
-            <div>
-              <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1.5 block">Quantité</label>
-              <input type="number" value={form.stock} onChange={e => update('stock', e.target.value)} min={0}
-                className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors" />
-            </div>
+            <input type="number" value={form.stock} onChange={e => update('stock', e.target.value)} min={0}
+              className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors" />
             {parseInt(form.stock) === 0 && (
               <p className="text-xs text-red-400 mt-2">⚠️ Produit en rupture de stock</p>
             )}
           </div>
 
-          {/* Save button */}
           <button onClick={handleSave} disabled={saving}
             className="w-full flex items-center justify-center gap-2 bg-white text-black font-semibold text-sm py-3.5 rounded-xl hover:bg-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-display tracking-wide">
-            <Save size={15} />
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
             {saving ? 'Enregistrement...' : 'Enregistrer'}
           </button>
 
           {!isNew && (
-            <button onClick={() => {
-              if (confirm('Supprimer ce produit ?')) {
-                toast.success('Produit supprimé')
-                router.push('/produits')
-              }
-            }}
+            <button onClick={handleDelete}
               className="w-full text-sm text-red-400 hover:text-red-300 py-2 transition-colors">
               Supprimer le produit
             </button>

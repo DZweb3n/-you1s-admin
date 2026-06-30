@@ -1,127 +1,105 @@
 'use client'
-import { useState } from 'react'
-import { Upload, Save, Edit2, Check } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Save, Loader2 } from 'lucide-react'
 import Header from '@/components/Header'
+import { createClient } from '@/lib/supabase'
 import toast from 'react-hot-toast'
 
-const CONTENT_SECTIONS = [
-  {
-    section: 'Hero Slider',
-    items: [
-      { key: 'hero_slide_1_title', label: 'Slide 1 - Titre', type: 'text', value: 'Nouveautés' },
-      { key: 'hero_slide_1_subtitle', label: 'Slide 1 - Sous-titre', type: 'text', value: 'Découvrez les dernières pièces de la collection' },
-      { key: 'hero_slide_1_cta', label: 'Slide 1 - Bouton', type: 'text', value: 'Voir la collection' },
-      { key: 'hero_slide_1_img', label: 'Slide 1 - Image', type: 'image', value: '/img/prooduits/asics gel1130.webp' },
-      { key: 'hero_slide_2_title', label: 'Slide 2 - Titre', type: 'text', value: 'Incontournables' },
-      { key: 'hero_slide_2_img', label: 'Slide 2 - Image', type: 'image', value: '/img/prooduits/incontournable.jpg' },
-    ]
-  },
-  {
-    section: 'Section Éditoriale',
-    items: [
-      { key: 'editorial_label', label: 'Label', type: 'text', value: 'You1s Notre ADN' },
-      { key: 'editorial_title', label: 'Titre', type: 'text', value: "L'Authenticité Avant Tout" },
-      { key: 'editorial_desc', label: 'Description', type: 'textarea', value: "Pas de hype vide. Pas de compromis. You1s c'est une vision..." },
-      { key: 'editorial_cta', label: 'Bouton', type: 'text', value: 'Explorer la sélection' },
-      { key: 'editorial_img', label: 'Image', type: 'image', value: '/img/prooduits/incontournable.jpg' },
-    ]
-  },
-  {
-    section: 'Restocks',
-    items: [
-      { key: 'restock_banner_title', label: 'Titre bannière', type: 'text', value: 'Restocks' },
-      { key: 'restock_banner_sub', label: 'Sous-titre', type: 'text', value: 'Les pièces les plus désirées sont de retour' },
-    ]
-  },
-  {
-    section: 'Newsletter',
-    items: [
-      { key: 'newsletter_title', label: 'Titre', type: 'text', value: 'Rejoignez la communauté' },
-      { key: 'newsletter_sub', label: 'Sous-titre', type: 'text', value: 'Accès en avant-première aux restocks et nouvelles collections' },
-      { key: 'newsletter_placeholder', label: 'Placeholder email', type: 'text', value: 'Votre email' },
-      { key: 'newsletter_btn', label: 'Bouton', type: 'text', value: "S'inscrire" },
-    ]
-  },
-]
+type ContentItem = {
+  key: string
+  label: string
+  section: string
+  type: string
+  value: string
+}
 
 export default function ContenuPage() {
-  const [content, setContent] = useState<Record<string, string>>(
-    Object.fromEntries(CONTENT_SECTIONS.flatMap(s => s.items).map(i => [i.key, i.value]))
-  )
-  const [editing, setEditing] = useState<string | null>(null)
-  const [saved, setSaved] = useState<string | null>(null)
+  const [items, setItems] = useState<ContentItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState<string | null>(null)
+  const supabase = createClient()
 
-  function saveField(key: string) {
-    setSaved(key)
-    setTimeout(() => setSaved(null), 2000)
-    toast.success('Contenu sauvegardé')
-    setEditing(null)
+  async function load() {
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('site_content')
+      .select('key, label, section, type, value')
+      .order('section')
+    if (error) toast.error('Erreur de chargement')
+    else setItems(data || [])
+    setLoading(false)
   }
+
+  useEffect(() => { load() }, [])
+
+  function updateValue(key: string, value: string) {
+    setItems(prev => prev.map(i => i.key === key ? { ...i, value } : i))
+  }
+
+  async function saveItem(item: ContentItem) {
+    setSaving(item.key)
+    const { error } = await supabase
+      .from('site_content')
+      .update({ value: item.value, updated_at: new Date().toISOString() })
+      .eq('key', item.key)
+    setSaving(null)
+    if (error) toast.error('Erreur lors de la sauvegarde')
+    else toast.success('Contenu mis à jour')
+  }
+
+  const sections = [...new Set(items.map(i => i.section))]
 
   return (
     <div>
-      <Header
-        title="Contenu du site"
-        subtitle="Modifiez les textes et images sans toucher au code"
-      />
+      <Header title="Contenu du site" subtitle="Gérez les textes et médias affichés sur le site" />
 
-      <div className="space-y-6">
-        {CONTENT_SECTIONS.map(({ section, items }) => (
-          <div key={section} className="bg-[#111] border border-[#1e1e1e] rounded-2xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-[#1e1e1e]">
-              <h2 className="text-white font-semibold text-sm">{section}</h2>
-            </div>
-            <div className="divide-y divide-[#1a1a1a]">
-              {items.map(({ key, label, type }) => (
-                <div key={key} className="px-6 py-4 flex items-start gap-4">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">{label}</p>
-                    {type === 'image' ? (
-                      <div className="flex items-center gap-3">
-                        <div className="w-16 h-12 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] overflow-hidden flex items-center justify-center flex-shrink-0">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={content[key]} alt="" className="w-full h-full object-cover"
-                            onError={(e: any) => { e.target.style.display = 'none' }} />
-                        </div>
-                        <label className="flex items-center gap-2 text-xs text-zinc-400 hover:text-white border border-[#2a2a2a] hover:border-[#333] px-3 py-2 rounded-lg cursor-pointer transition-all">
-                          <Upload size={12} />
-                          Changer l'image
-                          <input type="file" accept="image/*" className="hidden"
-                            onChange={() => toast.success('Connectez Supabase Storage pour l\'upload')} />
-                        </label>
-                        <span className="text-xs text-zinc-600 truncate max-w-xs">{content[key]}</span>
-                      </div>
-                    ) : editing === key ? (
-                      <div className="flex gap-2">
-                        {type === 'textarea' ? (
-                          <textarea value={content[key]} onChange={e => setContent(p => ({ ...p, [key]: e.target.value }))} rows={3}
-                            className="flex-1 bg-[#1a1a1a] border border-white/20 text-white text-sm px-3 py-2 rounded-xl outline-none resize-none" />
-                        ) : (
-                          <input value={content[key]} onChange={e => setContent(p => ({ ...p, [key]: e.target.value }))}
-                            className="flex-1 bg-[#1a1a1a] border border-white/20 text-white text-sm px-3 py-2 rounded-xl outline-none" />
-                        )}
-                        <button onClick={() => saveField(key)}
-                          className="flex items-center gap-1.5 text-xs bg-white text-black font-semibold px-3 py-2 rounded-lg hover:bg-zinc-200 transition-colors whitespace-nowrap">
-                          <Check size={12} /> Sauver
-                        </button>
-                        <button onClick={() => setEditing(null)} className="text-xs text-zinc-500 hover:text-white px-3 py-2 transition-colors">✕</button>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-zinc-300 line-clamp-2">{content[key]}</p>
-                    )}
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 size={20} className="animate-spin text-zinc-500" />
+        </div>
+      ) : items.length === 0 ? (
+        <div className="text-center py-20 text-zinc-500">
+          <p className="text-sm">Aucun contenu trouvé. Vérifiez que le schéma Supabase a bien été exécuté.</p>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {sections.map(section => (
+            <div key={section} className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
+              <h2 className="text-white font-semibold text-sm mb-5">{section}</h2>
+              <div className="space-y-4">
+                {items.filter(i => i.section === section).map(item => (
+                  <div key={item.key}>
+                    <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1.5 block">{item.label}</label>
+                    <div className="flex gap-2">
+                      {item.type === 'textarea' ? (
+                        <textarea
+                          value={item.value || ''}
+                          onChange={e => updateValue(item.key, e.target.value)}
+                          rows={3}
+                          className="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors resize-none"
+                        />
+                      ) : (
+                        <input
+                          value={item.value || ''}
+                          onChange={e => updateValue(item.key, e.target.value)}
+                          className="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors"
+                        />
+                      )}
+                      <button
+                        onClick={() => saveItem(item)}
+                        disabled={saving === item.key}
+                        className="flex items-center gap-1.5 bg-white text-black text-xs font-semibold px-4 py-2 rounded-xl hover:bg-zinc-200 transition-colors disabled:opacity-50 flex-shrink-0">
+                        {saving === item.key ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                        Sauver
+                      </button>
+                    </div>
                   </div>
-                  {type !== 'image' && editing !== key && (
-                    <button onClick={() => setEditing(key)}
-                      className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-white hover:border-[#333] transition-all flex-shrink-0 mt-5">
-                      {saved === key ? <Check size={13} className="text-green-400" /> : <Edit2 size={13} />}
-                    </button>
-                  )}
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
