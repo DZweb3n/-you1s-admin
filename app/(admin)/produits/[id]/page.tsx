@@ -1,14 +1,15 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Save, Loader2 } from 'lucide-react'
+import { ArrowLeft, Save, Loader2, Upload, X, ImagePlus } from 'lucide-react'
 import Header from '@/components/Header'
 import { createClient } from '@/lib/supabase'
 import { slugify } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
 const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45', '46']
+const STORAGE_BUCKET = 'products'
 
 type Category = { id: string; name: string }
 
@@ -17,10 +18,13 @@ export default function ProduitEditPage() {
   const router = useRouter()
   const isNew = id === 'nouveau'
   const supabase = createClient()
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(!isNew)
   const [saving, setSaving] = useState(false)
+  const [uploadingImage, setUploadingImage] = useState(false)
+  const [images, setImages] = useState<string[]>([])
 
   const [form, setForm] = useState({
     name: '',
@@ -59,6 +63,7 @@ export default function ProduitEditPage() {
           sizes: Array.isArray(data.sizes) ? data.sizes : [],
           colors: Array.isArray(data.colors) ? data.colors : [],
         })
+        setImages(Array.isArray(data.images) ? data.images : [])
         setLoading(false)
       }
     }
@@ -74,6 +79,66 @@ export default function ProduitEditPage() {
       ...prev,
       sizes: prev.sizes.includes(size) ? prev.sizes.filter(s => s !== size) : [...prev.sizes, size]
     }))
+  }
+
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    setUploadingImage(true)
+
+    const newUrls: string[] = []
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) { toast.error(`${file.name} n'est pas une image`); continue }
+      if (file.size > 5 * 1024 * 1024) { toast.error(`${file.name} dépasse 5 Mo`); continue }
+
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+      const path = `${isNew ? 'new' : id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+
+      const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, {
+        cacheControl: '3600', upsert: false, contentType: file.type
+      })
+
+      if (error) {
+        toast.error(`Erreur upload: ${error.message}`)
+        continue
+      }
+
+      const { data: { publicUrl } } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path)
+      newUrls.push(publicUrl)
+    }
+
+    if (newUrls.length) {
+      const updated = [...images, ...newUrls]
+      setImages(updated)
+
+      // Save immediately if editing existing product
+      if (!isNew) {
+        await supabase.from('products').update({ images: updated }).eq('id', id)
+      }
+      toast.success(`${newUrls.length} image(s) ajoutée(s)`)
+    }
+
+    setUploadingImage(false)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  async function removeImage(url: string) {
+    const updated = images.filter(u => u !== url)
+    setImages(updated)
+
+    // Extract storage path from URL and delete from bucket
+    try {
+      const urlObj = new URL(url)
+      const pathParts = urlObj.pathname.split(`/object/public/${STORAGE_BUCKET}/`)
+      if (pathParts.length > 1) {
+        await supabase.storage.from(STORAGE_BUCKET).remove([pathParts[1]])
+      }
+    } catch {}
+
+    if (!isNew) {
+      await supabase.from('products').update({ images: updated }).eq('id', id)
+      toast.success('Image supprimée')
+    }
   }
 
   async function handleSave() {
@@ -94,11 +159,33 @@ export default function ProduitEditPage() {
       active: form.active,
       sizes: form.sizes,
       colors: form.colors,
+      images,
     }
 
     if (isNew) {
-      const { error } = await supabase.from('products').insert(payload)
+      const { data: created, error } = await supabase.from('products').insert(payload).select('id').single()
       if (error) { toast.error('Erreur lors de la création'); setSaving(false); return }
+
+      // Rename uploaded images from 'new/' to actual product id
+      if (images.length > 0 && created?.id) {
+        const renamedUrls: string[] = []
+        for (const url of images) {
+          try {
+            const urlObj = new URL(url)
+            const pathParts = urlObj.pathname.split(`/object/public/${STORAGE_BUCKET}/`)
+            if (pathParts.length > 1 && pathParts[1].startsWith('new/')) {
+              const newPath = pathParts[1].replace('new/', `${created.id}/`)
+              await supabase.storage.from(STORAGE_BUCKET).move(pathParts[1], newPath)
+              const { data: { publicUrl } } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(newPath)
+              renamedUrls.push(publicUrl)
+            } else {
+              renamedUrls.push(url)
+            }
+          } catch { renamedUrls.push(url) }
+        }
+        await supabase.from('products').update({ images: renamedUrls }).eq('id', created.id)
+      }
+
       toast.success('Produit créé !')
       router.push('/produits')
     } else {
@@ -111,6 +198,20 @@ export default function ProduitEditPage() {
 
   async function handleDelete() {
     if (!confirm('Supprimer ce produit ? Cette action est irréversible.')) return
+
+    // Delete all images from storage
+    if (images.length > 0) {
+      const paths: string[] = []
+      for (const url of images) {
+        try {
+          const urlObj = new URL(url)
+          const pathParts = urlObj.pathname.split(`/object/public/${STORAGE_BUCKET}/`)
+          if (pathParts.length > 1) paths.push(pathParts[1])
+        } catch {}
+      }
+      if (paths.length) await supabase.storage.from(STORAGE_BUCKET).remove(paths)
+    }
+
     const { error } = await supabase.from('products').delete().eq('id', id)
     if (error) { toast.error('Erreur lors de la suppression'); return }
     toast.success('Produit supprimé')
@@ -137,6 +238,36 @@ export default function ProduitEditPage() {
 
       <div className="grid grid-cols-3 gap-6">
         <div className="col-span-2 space-y-4">
+          {/* Images */}
+          <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
+            <h2 className="text-white font-semibold text-sm mb-5">Photos du produit</h2>
+            <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} />
+            <div className="grid grid-cols-4 gap-3 mb-3">
+              {images.map((url, i) => (
+                <div key={i} className="relative group aspect-square rounded-xl overflow-hidden border border-[#2a2a2a]">
+                  <img src={url} alt="" className="w-full h-full object-cover" />
+                  {i === 0 && (
+                    <div className="absolute top-1 left-1 bg-white/90 text-black text-[10px] font-semibold px-1.5 py-0.5 rounded">
+                      Principal
+                    </div>
+                  )}
+                  <button onClick={() => removeImage(url)}
+                    className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/80 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+              <button onClick={() => fileInputRef.current?.click()} disabled={uploadingImage}
+                className="aspect-square rounded-xl border border-dashed border-[#2a2a2a] hover:border-[#444] flex flex-col items-center justify-center gap-2 transition-colors text-zinc-600 hover:text-zinc-400 disabled:opacity-50">
+                {uploadingImage
+                  ? <Loader2 size={18} className="animate-spin" />
+                  : <><ImagePlus size={18} /><span className="text-[10px]">Ajouter</span></>
+                }
+              </button>
+            </div>
+            <p className="text-xs text-zinc-600">JPG, PNG, WEBP · Max 5 Mo par image · La première image est l'image principale</p>
+          </div>
+
           {/* Infos générales */}
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
             <h2 className="text-white font-semibold text-sm mb-5">Informations générales</h2>
@@ -244,7 +375,7 @@ export default function ProduitEditPage() {
             <input type="number" value={form.stock} onChange={e => update('stock', e.target.value)} min={0}
               className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors" />
             {parseInt(form.stock) === 0 && (
-              <p className="text-xs text-red-400 mt-2">⚠️ Produit en rupture de stock</p>
+              <p className="text-xs text-red-400 mt-2">Produit en rupture de stock</p>
             )}
           </div>
 
