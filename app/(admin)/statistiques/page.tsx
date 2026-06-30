@@ -12,14 +12,13 @@ type Period = 'day' | 'week' | 'month' | 'year'
 
 export default function StatistiquesPage() {
   const [period, setPeriod] = useState<Period>('month')
-  const supabase = createClient()
-
   const [allOrders, setAllOrders] = useState<any[]>([])
   const [topProducts, setTopProducts] = useState<any[]>([])
   const [weeklyData, setWeeklyData] = useState<any[]>([])
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
+    const supabase = createClient()
     async function load() {
       const { data: orders } = await supabase.from('orders').select('total, status, created_at, items').order('created_at')
       setAllOrders(orders || [])
