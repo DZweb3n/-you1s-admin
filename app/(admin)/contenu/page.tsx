@@ -47,7 +47,7 @@ export default function ContenuPage() {
     else toast.success('Contenu mis à jour')
   }
 
-  const sections = [...new Set(items.map(i => i.section))]
+  const sections = Array.from(new Set(items.map(i => i.section)))
 
   return (
     <div>
