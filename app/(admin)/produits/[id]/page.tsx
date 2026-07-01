@@ -37,6 +37,7 @@ export default function ProduitEditPage() {
     category_id: '',
     stock: '0',
     active: true,
+    featured: false,
     sizes: [] as string[],
     colors: [] as string[],
   })
@@ -60,6 +61,7 @@ export default function ProduitEditPage() {
           category_id: data.category_id || '',
           stock: data.stock?.toString() || '0',
           active: data.active ?? true,
+          featured: data.featured ?? false,
           sizes: Array.isArray(data.sizes) ? data.sizes : [],
           colors: Array.isArray(data.colors) ? data.colors : [],
         })
@@ -157,6 +159,7 @@ export default function ProduitEditPage() {
       category_id: form.category_id || null,
       stock: parseInt(form.stock) || 0,
       active: form.active,
+      featured: form.featured,
       sizes: form.sizes,
       colors: form.colors,
       images,
@@ -359,6 +362,15 @@ export default function ProduitEditPage() {
               </button>
             </div>
             <p className="text-xs text-zinc-600 mt-2">{form.active ? 'Visible sur le site' : 'Masqué du site'}</p>
+
+            <div className="flex items-center justify-between mt-5 pt-5 border-t border-[#1e1e1e]">
+              <span className="text-sm text-zinc-300">À la une (accueil)</span>
+              <button onClick={() => update('featured', !form.featured)}
+                className={`relative w-11 h-6 rounded-full transition-colors ${form.featured ? 'bg-white' : 'bg-[#2a2a2a]'}`}>
+                <div className={`absolute top-0.5 w-5 h-5 rounded-full transition-transform bg-black ${form.featured ? 'translate-x-5' : 'translate-x-0.5'}`} />
+              </button>
+            </div>
+            <p className="text-xs text-zinc-600 mt-2">{form.featured ? 'Affiché dans le slider Best Sellers' : 'Non mis en avant sur l\'accueil'}</p>
           </div>
 
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
