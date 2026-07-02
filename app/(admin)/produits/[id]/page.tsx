@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Save, Loader2, Upload, X, ImagePlus } from 'lucide-react'
+import { ArrowLeft, Save, Loader2, Upload, X, ImagePlus, Plus } from 'lucide-react'
 import Header from '@/components/Header'
 import { createClient } from '@/lib/supabase'
 import { slugify } from '@/lib/utils'
@@ -10,6 +10,16 @@ import toast from 'react-hot-toast'
 
 const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45', '46']
 const STORAGE_BUCKET = 'products'
+
+const COLOR_PRESETS = ['Noir', 'Blanc', 'Gris', 'Beige', 'Bleu', 'Rouge', 'Vert', 'Marron', 'Marine', 'Kaki', 'Rose', 'Bordeaux']
+// Doit rester cohérent avec la carte couleurs du filtre du site (catalogue.html)
+const COLOR_HEX: Record<string, string> = {
+  noir: '#0a0a0a', blanc: '#ffffff', gris: '#b4b4b4', beige: '#d8c4a0', bleu: '#3f5c8f',
+  rouge: '#c0392b', vert: '#3a7d44', jaune: '#e8c245', orange: '#e07b39', rose: '#e59bb6',
+  violet: '#7d5ba6', marron: '#7a5230', marine: '#20344f', kaki: '#7c7b4f', bordeaux: '#6d1f2e',
+  or: '#c9a227', argent: '#c0c0c0', turquoise: '#3fb8af', creme: '#f3ead3', camel: '#c19a6b',
+}
+const colorHex = (name: string) => COLOR_HEX[name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')] || '#c9c9c9'
 
 type Category = { id: string; name: string; subcats?: { name: string; image?: string | null }[] }
 
@@ -25,6 +35,7 @@ export default function ProduitEditPage() {
   const [saving, setSaving] = useState(false)
   const [uploadingImage, setUploadingImage] = useState(false)
   const [images, setImages] = useState<string[]>([])
+  const [colorInput, setColorInput] = useState('')
 
   const [form, setForm] = useState({
     name: '',
@@ -83,6 +94,19 @@ export default function ProduitEditPage() {
       ...prev,
       sizes: prev.sizes.includes(size) ? prev.sizes.filter(s => s !== size) : [...prev.sizes, size]
     }))
+  }
+
+  function addColor(raw: string) {
+    const name = raw.trim().replace(/\s+/g, ' ')
+    if (!name) return
+    const pretty = name.charAt(0).toUpperCase() + name.slice(1)
+    setForm(prev => prev.colors.some(c => c.toLowerCase() === pretty.toLowerCase())
+      ? prev
+      : { ...prev, colors: [...prev.colors, pretty] })
+    setColorInput('')
+  }
+  function removeColor(name: string) {
+    setForm(prev => ({ ...prev, colors: prev.colors.filter(c => c !== name) }))
   }
 
   async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -359,6 +383,47 @@ export default function ProduitEditPage() {
                       : 'bg-[#1a1a1a] border border-[#2a2a2a] text-zinc-400 hover:border-[#333] hover:text-white'
                   }`}>
                   {size}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Couleurs */}
+          <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
+            <h2 className="text-white font-semibold text-sm mb-1">Couleurs disponibles</h2>
+            <p className="text-xs text-zinc-600 mb-4">Servent aux filtres et à la fiche produit. Clique un raccourci ou tape une couleur.</p>
+
+            {form.colors.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-4">
+                {form.colors.map(c => (
+                  <span key={c} className="inline-flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm pl-2 pr-1 py-1.5 rounded-lg">
+                    <span className="w-4 h-4 rounded-full border border-white/15" style={{ background: colorHex(c) }} />
+                    {c}
+                    <button onClick={() => removeColor(c)} className="w-5 h-5 rounded flex items-center justify-center text-zinc-500 hover:text-red-400">
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 mb-3">
+              <input value={colorInput} onChange={e => setColorInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addColor(colorInput) } }}
+                placeholder="Ajouter une couleur (ex: Rouge)"
+                className="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-2.5 rounded-xl outline-none focus:border-white/30 transition-colors placeholder:text-zinc-600" />
+              <button onClick={() => addColor(colorInput)}
+                className="flex items-center gap-1.5 text-sm text-zinc-300 bg-[#1a1a1a] border border-[#2a2a2a] px-3 py-2.5 rounded-xl hover:text-white hover:border-[#3a3a3a] transition-all">
+                <Plus size={14} />Ajouter
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-1.5">
+              {COLOR_PRESETS.filter(c => !form.colors.includes(c)).map(c => (
+                <button key={c} onClick={() => addColor(c)}
+                  className="inline-flex items-center gap-1.5 bg-[#1a1a1a] border border-[#2a2a2a] text-zinc-400 text-xs px-2.5 py-1.5 rounded-lg hover:text-white hover:border-[#3a3a3a] transition-all">
+                  <span className="w-3 h-3 rounded-full border border-white/15" style={{ background: colorHex(c) }} />
+                  {c}
                 </button>
               ))}
             </div>
