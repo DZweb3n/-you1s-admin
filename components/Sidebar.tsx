@@ -4,7 +4,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import {
   LayoutDashboard, Package, ShoppingBag, Tag,
-  Warehouse, BarChart2, FileImage, LogOut, ExternalLink
+  Warehouse, BarChart2, FileImage, LogOut, ExternalLink, Award
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -13,6 +13,7 @@ const NAV = [
   { href: '/produits', label: 'Produits', icon: Package },
   { href: '/commandes', label: 'Commandes', icon: ShoppingBag },
   { href: '/categories', label: 'Catégories', icon: Tag },
+  { href: '/marques', label: 'Marques', icon: Award },
   { href: '/stock', label: 'Stock', icon: Warehouse },
   { href: '/statistiques', label: 'Statistiques', icon: BarChart2 },
   { href: '/contenu', label: 'Contenu', icon: FileImage },
