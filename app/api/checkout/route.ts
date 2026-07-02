@@ -46,6 +46,15 @@ export async function POST(req: Request) {
 
     // ── Validation serveur : on récupère les vrais produits (prix + stock) ──
     const ids = Array.from(new Set(items.map((i) => String(i.id))))
+
+    // Ids non-UUID = panier périmé (anciens ids statiques) → message clair
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (ids.some((id) => !UUID_RE.test(id)))
+      return jsonCors(
+        { error: 'Votre panier a expiré. Videz-le puis ajoutez à nouveau vos articles.' },
+        origin,
+        409
+      )
     const { data: products, error: prodErr } = await supabase
       .from('products')
       .select('id, name, brand, price, stock, images, active')
