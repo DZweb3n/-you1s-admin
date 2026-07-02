@@ -1,39 +1,66 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { Plus, Edit2, Trash2, GripVertical, Tag, Loader2 } from 'lucide-react'
+import { Plus, Edit2, Trash2, Tag, Loader2, Upload, ImageIcon, X, ChevronUp, ChevronDown, Check } from 'lucide-react'
 import Header from '@/components/Header'
 import toast from 'react-hot-toast'
 import { createClient } from '@/lib/supabase'
 import { slugify } from '@/lib/utils'
+
+const STORAGE_BUCKET = 'products'
+
+type Subcat = { name: string; image: string | null }
 
 type Category = {
   id: string
   name: string
   slug: string
   description: string | null
+  image: string | null
   active: boolean
   sort_order: number
+  subcats: Subcat[]
+}
+
+function normalizeSubcats(raw: unknown): Subcat[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((s): s is Record<string, unknown> => !!s && typeof s === 'object')
+    .map(s => ({ name: String(s.name ?? ''), image: s.image ? String(s.image) : null }))
+    .filter(s => s.name.length > 0)
 }
 
 export default function CategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState({ name: '', description: '' })
+  const [editForm, setEditForm] = useState<{ name: string; description: string; subcats: Subcat[] }>({ name: '', description: '', subcats: [] })
+  const [newSubcat, setNewSubcat] = useState('')
   const [showNew, setShowNew] = useState(false)
   const [newForm, setNewForm] = useState({ name: '', description: '' })
   const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState<string | null>(null)
+  const [subcatsSupported, setSubcatsSupported] = useState(true)
 
   const supabase = createClient()
 
   async function load() {
     setLoading(true)
-    const { data, error } = await supabase
+    // On tente avec subcats ; si la colonne n'existe pas encore (script 06 non lancé), on retombe sans
+    let { data, error } = await supabase
       .from('categories')
-      .select('*')
+      .select('id, name, slug, description, image, active, sort_order, subcats')
       .order('sort_order', { ascending: true })
-    if (error) toast.error('Erreur de chargement')
-    else setCategories(data || [])
+    if (error) {
+      setSubcatsSupported(false)
+      const retry = await supabase
+        .from('categories')
+        .select('id, name, slug, description, image, active, sort_order')
+        .order('sort_order', { ascending: true })
+      data = retry.data as any
+      error = retry.error
+    }
+    if (error) toast.error(`Erreur de chargement : ${error.message}`)
+    else setCategories((data || []).map((c: any) => ({ ...c, subcats: normalizeSubcats(c.subcats) })))
     setLoading(false)
   }
 
@@ -41,54 +68,126 @@ export default function CategoriesPage() {
 
   function startEdit(cat: Category) {
     setEditing(cat.id)
-    setEditForm({ name: cat.name, description: cat.description || '' })
+    setNewSubcat('')
+    setEditForm({ name: cat.name, description: cat.description || '', subcats: cat.subcats.map(s => ({ ...s })) })
   }
 
-  async function saveEdit(id: string) {
+  /* ── FIX DU BUG : le slug ne change JAMAIS lors d'une modification.
+     Le site identifie les catégories par leur slug (URLs, filtres, mega menu).
+     L'ancien code régénérait le slug à chaque renommage → liens cassés côté site. ── */
+  async function saveEdit(cat: Category) {
+    if (!editForm.name.trim()) return toast.error('Le nom est obligatoire')
     setSaving(true)
-    const { error } = await supabase
-      .from('categories')
-      .update({ name: editForm.name, description: editForm.description, slug: slugify(editForm.name) })
-      .eq('id', id)
+    const payload: Record<string, unknown> = {
+      name: editForm.name.trim(),
+      description: editForm.description.trim(),
+    }
+    if (subcatsSupported) payload.subcats = editForm.subcats
+    const { error } = await supabase.from('categories').update(payload).eq('id', cat.id)
     setSaving(false)
-    if (error) { toast.error('Erreur lors de la sauvegarde'); return }
-    setCategories(prev => prev.map(c => c.id === id ? { ...c, name: editForm.name, description: editForm.description, slug: slugify(editForm.name) } : c))
+    if (error) {
+      toast.error(`Échec de l'enregistrement : ${error.message}`)
+      return
+    }
+    setCategories(prev => prev.map(c => c.id === cat.id
+      ? { ...c, name: editForm.name.trim(), description: editForm.description.trim(), subcats: editForm.subcats }
+      : c))
     setEditing(null)
     toast.success('Catégorie mise à jour')
   }
 
-  async function deleteCategory(id: string) {
-    if (!confirm('Supprimer cette catégorie ?')) return
-    const { error } = await supabase.from('categories').delete().eq('id', id)
-    if (error) { toast.error('Erreur lors de la suppression'); return }
-    setCategories(prev => prev.filter(c => c.id !== id))
+  async function uploadImage(cat: Category, file: File) {
+    if (!file.type.startsWith('image/')) return toast.error("Ce fichier n'est pas une image")
+    if (file.size > 5 * 1024 * 1024) return toast.error('Image trop lourde (max 5 Mo)')
+    setUploading(cat.id)
+    const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+    const path = `categories/${cat.slug}-${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type })
+    if (error) { setUploading(null); return toast.error(`Erreur upload : ${error.message}`) }
+    const { data: { publicUrl } } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path)
+    const { error: upErr } = await supabase.from('categories').update({ image: publicUrl }).eq('id', cat.id)
+    setUploading(null)
+    if (upErr) return toast.error(`Erreur de sauvegarde : ${upErr.message}`)
+    setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, image: publicUrl } : c))
+    toast.success('Image mise à jour')
+  }
+
+  async function removeImage(cat: Category) {
+    const { error } = await supabase.from('categories').update({ image: null }).eq('id', cat.id)
+    if (error) return toast.error(`Erreur : ${error.message}`)
+    setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, image: null } : c))
+    toast.success('Image retirée (le site utilise son visuel par défaut)')
+  }
+
+  async function deleteCategory(cat: Category) {
+    if (!confirm(`Supprimer « ${cat.name} » ?\n\nLes produits de cette catégorie ne seront PAS supprimés, mais ils n'apparaîtront plus dans les filtres de catégorie du site tant qu'on ne leur en attribue pas une nouvelle.`)) return
+    const { error } = await supabase.from('categories').delete().eq('id', cat.id)
+    if (error) return toast.error(`Erreur lors de la suppression : ${error.message}`)
+    setCategories(prev => prev.filter(c => c.id !== cat.id))
     toast.success('Catégorie supprimée')
   }
 
   async function toggleActive(cat: Category) {
-    const { error } = await supabase
-      .from('categories')
-      .update({ active: !cat.active })
-      .eq('id', cat.id)
-    if (error) { toast.error('Erreur lors de la mise à jour'); return }
+    const { error } = await supabase.from('categories').update({ active: !cat.active }).eq('id', cat.id)
+    if (error) return toast.error(`Erreur : ${error.message}`)
     setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, active: !cat.active } : c))
     toast.success('Statut mis à jour')
   }
 
   async function addCategory() {
-    if (!newForm.name) return toast.error('Nom obligatoire')
+    if (!newForm.name.trim()) return toast.error('Nom obligatoire')
     setSaving(true)
     const { data, error } = await supabase
       .from('categories')
-      .insert({ name: newForm.name, slug: slugify(newForm.name), description: newForm.description, active: true, sort_order: categories.length })
+      .insert({ name: newForm.name.trim(), slug: slugify(newForm.name), description: newForm.description.trim(), active: true, sort_order: categories.length })
       .select()
       .single()
     setSaving(false)
-    if (error) { toast.error('Erreur lors de la création'); return }
-    setCategories(prev => [...prev, data])
+    if (error) {
+      const msg = error.message.includes('duplicate') ? 'Une catégorie avec ce nom (slug) existe déjà' : error.message
+      return toast.error(`Erreur lors de la création : ${msg}`)
+    }
+    setCategories(prev => [...prev, { ...data, subcats: normalizeSubcats((data as any).subcats) }])
     setNewForm({ name: '', description: '' })
     setShowNew(false)
     toast.success('Catégorie créée')
+  }
+
+  /* ── Sous-catégories (dans le formulaire d'édition, sauvées avec Enregistrer) ── */
+  function addSubcat() {
+    const name = newSubcat.trim()
+    if (!name) return
+    if (editForm.subcats.some(s => s.name.toLowerCase() === name.toLowerCase())) return toast.error('Cette sous-catégorie existe déjà')
+    setEditForm(p => ({ ...p, subcats: [...p.subcats, { name, image: null }] }))
+    setNewSubcat('')
+  }
+  function renameSubcat(idx: number, name: string) {
+    setEditForm(p => ({ ...p, subcats: p.subcats.map((s, i) => i === idx ? { ...s, name } : s) }))
+  }
+  function removeSubcat(idx: number) {
+    setEditForm(p => ({ ...p, subcats: p.subcats.filter((_, i) => i !== idx) }))
+  }
+  function moveSubcat(idx: number, dir: -1 | 1) {
+    setEditForm(p => {
+      const arr = [...p.subcats]
+      const j = idx + dir
+      if (j < 0 || j >= arr.length) return p
+      ;[arr[idx], arr[j]] = [arr[j], arr[idx]]
+      return { ...p, subcats: arr }
+    })
+  }
+  async function uploadSubcatImage(idx: number, cat: Category, file: File) {
+    if (!file.type.startsWith('image/')) return toast.error("Ce fichier n'est pas une image")
+    if (file.size > 5 * 1024 * 1024) return toast.error('Image trop lourde (max 5 Mo)')
+    setUploading(`${cat.id}-sub-${idx}`)
+    const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+    const path = `categories/${cat.slug}-sub-${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type })
+    if (error) { setUploading(null); return toast.error(`Erreur upload : ${error.message}`) }
+    const { data: { publicUrl } } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path)
+    setUploading(null)
+    setEditForm(p => ({ ...p, subcats: p.subcats.map((s, i) => i === idx ? { ...s, image: publicUrl } : s) }))
+    toast.success("Image ajoutée — clique Enregistrer pour valider")
   }
 
   return (
@@ -103,6 +202,12 @@ export default function CategoriesPage() {
           </button>
         }
       />
+
+      {!subcatsSupported && (
+        <div className="bg-yellow-400/10 border border-yellow-400/20 text-yellow-300 text-xs rounded-xl px-4 py-3 mb-5">
+          Les sous-catégories ne sont pas encore activées en base : lance le script <span className="font-mono">06-categories-subcats.sql</span> dans Supabase → SQL Editor.
+        </div>
+      )}
 
       {showNew && (
         <div className="bg-[#111] border border-white/10 rounded-2xl p-6 mb-5">
@@ -145,36 +250,116 @@ export default function CategoriesPage() {
           {categories.map(cat => (
             <div key={cat.id} className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-5 hover:border-[#2a2a2a] transition-colors">
               {editing === cat.id ? (
-                <div className="grid grid-cols-2 gap-3">
-                  <input value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))}
-                    className="bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-2.5 rounded-xl outline-none focus:border-white/30" />
-                  <input value={editForm.description} onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))}
-                    className="bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-2.5 rounded-xl outline-none focus:border-white/30" />
-                  <div className="col-span-2 flex gap-2">
-                    <button onClick={() => saveEdit(cat.id)} disabled={saving}
+                /* ─────────── MODE ÉDITION ─────────── */
+                <div className="space-y-5">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1.5 block">Nom</label>
+                      <input value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))}
+                        className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-2.5 rounded-xl outline-none focus:border-white/30" />
+                      <p className="text-[10px] text-zinc-600 mt-1.5 font-mono">/{cat.slug} <span className="font-sans">(identifiant technique — ne change pas, les liens du site restent valides)</span></p>
+                    </div>
+                    <div>
+                      <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1.5 block">Description</label>
+                      <input value={editForm.description} onChange={e => setEditForm(p => ({ ...p, description: e.target.value }))}
+                        className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-2.5 rounded-xl outline-none focus:border-white/30" />
+                    </div>
+                  </div>
+
+                  {/* Sous-catégories */}
+                  {subcatsSupported && (
+                    <div>
+                      <label className="text-xs text-zinc-500 uppercase tracking-wider mb-2 block">Sous-catégories</label>
+                      <div className="space-y-2">
+                        {editForm.subcats.map((s, i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <div className="w-9 h-9 rounded-lg overflow-hidden border border-[#2a2a2a] bg-[#1a1a1a] flex items-center justify-center flex-shrink-0">
+                              {s.image
+                                ? <img src={s.image} alt="" className="w-full h-full object-cover" />
+                                : <ImageIcon size={13} className="text-zinc-600" />}
+                            </div>
+                            <input value={s.name} onChange={e => renameSubcat(i, e.target.value)}
+                              className="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-3 py-2 rounded-lg outline-none focus:border-white/30" />
+                            <label className={`w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-white cursor-pointer transition-all ${uploading === `${cat.id}-sub-${i}` ? 'opacity-50 pointer-events-none' : ''}`}
+                              title="Image de la sous-catégorie">
+                              {uploading === `${cat.id}-sub-${i}` ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                              <input type="file" accept="image/*" className="hidden"
+                                onChange={e => { const f = e.target.files?.[0]; if (f) uploadSubcatImage(i, cat, f); e.currentTarget.value = '' }} />
+                            </label>
+                            <button onClick={() => moveSubcat(i, -1)} disabled={i === 0}
+                              className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-white disabled:opacity-30 transition-all" title="Monter">
+                              <ChevronUp size={13} />
+                            </button>
+                            <button onClick={() => moveSubcat(i, 1)} disabled={i === editForm.subcats.length - 1}
+                              className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-white disabled:opacity-30 transition-all" title="Descendre">
+                              <ChevronDown size={13} />
+                            </button>
+                            <button onClick={() => removeSubcat(i)}
+                              className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-red-400 transition-all" title="Supprimer">
+                              <X size={13} />
+                            </button>
+                          </div>
+                        ))}
+                        <div className="flex items-center gap-2">
+                          <input value={newSubcat} onChange={e => setNewSubcat(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSubcat() } }}
+                            placeholder="Nouvelle sous-catégorie..."
+                            className="flex-1 bg-[#1a1a1a] border border-dashed border-[#2a2a2a] text-white text-sm px-3 py-2 rounded-lg outline-none focus:border-white/30 placeholder:text-zinc-600" />
+                          <button onClick={addSubcat}
+                            className="flex items-center gap-1.5 text-xs text-zinc-300 bg-[#1a1a1a] border border-[#2a2a2a] px-3 py-2 rounded-lg hover:text-white hover:border-[#3a3a3a] transition-all">
+                            <Plus size={12} />Ajouter
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button onClick={() => saveEdit(cat)} disabled={saving}
                       className="bg-white text-black text-xs font-semibold px-4 py-2 rounded-lg disabled:opacity-50 flex items-center gap-1.5">
-                      {saving && <Loader2 size={11} className="animate-spin" />}Enregistrer
+                      {saving ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}Enregistrer
                     </button>
                     <button onClick={() => setEditing(null)} className="text-xs text-zinc-500 hover:text-white px-4 py-2 transition-colors">Annuler</button>
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <GripVertical size={16} className="text-zinc-700 cursor-grab" />
-                    <div className="w-9 h-9 rounded-xl bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center">
-                      <Tag size={15} className="text-zinc-400" />
+                /* ─────────── MODE AFFICHAGE ─────────── */
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-4 min-w-0">
+                    {/* Image de la catégorie */}
+                    <div className="relative group/img w-14 h-14 rounded-xl overflow-hidden border border-[#2a2a2a] bg-[#1a1a1a] flex items-center justify-center flex-shrink-0">
+                      {cat.image
+                        ? <img src={cat.image} alt="" className="w-full h-full object-cover" />
+                        : <Tag size={15} className="text-zinc-500" />}
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm font-semibold text-white">{cat.name}</p>
                         <span className="text-[10px] text-zinc-600 font-mono">/{cat.slug}</span>
                         {!cat.active && <span className="text-[10px] text-zinc-500 px-1.5 py-0.5 bg-[#1e1e1e] rounded">Inactif</span>}
                       </div>
-                      <p className="text-xs text-zinc-500 mt-0.5">{cat.description}</p>
+                      <p className="text-xs text-zinc-500 mt-0.5 truncate">{cat.description}</p>
+                      {cat.subcats.length > 0 && (
+                        <p className="text-[11px] text-zinc-600 mt-1 truncate">
+                          {cat.subcats.map(s => s.name).join(' · ')}
+                        </p>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <label className={`flex items-center gap-1.5 text-xs text-zinc-300 bg-[#1a1a1a] border border-[#2a2a2a] px-3 py-2 rounded-lg hover:text-white hover:border-[#3a3a3a] cursor-pointer transition-all ${uploading === cat.id ? 'opacity-50 pointer-events-none' : ''}`}>
+                      {uploading === cat.id ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                      Image
+                      <input type="file" accept="image/*" className="hidden"
+                        onChange={e => { const f = e.target.files?.[0]; if (f) uploadImage(cat, f); e.currentTarget.value = '' }} />
+                    </label>
+                    {cat.image && (
+                      <button onClick={() => removeImage(cat)}
+                        className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-red-400 transition-all"
+                        title="Retirer l'image">
+                        <X size={13} />
+                      </button>
+                    )}
                     <button onClick={() => toggleActive(cat)}
                       className={`relative w-9 h-5 rounded-full transition-colors ${cat.active ? 'bg-white' : 'bg-[#2a2a2a]'}`}>
                       <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-black transition-transform ${cat.active ? 'translate-x-4' : 'translate-x-0.5'}`} />
@@ -183,7 +368,7 @@ export default function CategoriesPage() {
                       className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-white hover:border-[#333] transition-all">
                       <Edit2 size={13} />
                     </button>
-                    <button onClick={() => deleteCategory(cat.id)}
+                    <button onClick={() => deleteCategory(cat)}
                       className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-red-400 hover:border-red-400/30 transition-all">
                       <Trash2 size={13} />
                     </button>
