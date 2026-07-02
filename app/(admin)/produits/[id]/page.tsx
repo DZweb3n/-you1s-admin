@@ -77,8 +77,9 @@ export default function ProduitEditPage() {
           active: data.active ?? true,
           featured: data.featured ?? false,
           pretAPorter: data.pret_a_porter ?? false,
-          sizes: Array.isArray(data.sizes) ? data.sizes : [],
-          colors: Array.isArray(data.colors) ? data.colors : [],
+          // Normalise en texte (la base peut stocker des nombres) + dédoublonne
+          sizes: Array.from(new Set((Array.isArray(data.sizes) ? data.sizes : []).map((s: any) => String(s)))),
+          colors: Array.from(new Set((Array.isArray(data.colors) ? data.colors : []).map((c: any) => String(c)))),
         })
         setImages(Array.isArray(data.images) ? data.images : [])
         setLoading(false)
@@ -190,8 +191,8 @@ export default function ProduitEditPage() {
       active: form.active,
       featured: form.featured,
       pret_a_porter: form.pretAPorter,
-      sizes: form.sizes,
-      colors: form.colors,
+      sizes: Array.from(new Set(form.sizes.map(s => String(s)))),
+      colors: Array.from(new Set(form.colors.map(c => String(c)))),
       images,
     }
 
