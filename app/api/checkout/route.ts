@@ -189,7 +189,9 @@ export async function POST(req: Request) {
 
     return jsonCors({ url: session.url }, origin, 200)
   } catch (e: any) {
-    console.error('[checkout] error', e?.message || e)
-    return jsonCors({ error: 'Erreur serveur.' }, origin, 500)
+    const detail = e?.message || String(e)
+    console.error('[checkout] error', detail)
+    // detail non sensible (message d'erreur technique) — aide au diagnostic côté client
+    return jsonCors({ error: 'Erreur serveur.', detail }, origin, 500)
   }
 }
