@@ -50,6 +50,7 @@ export default function ProduitEditPage() {
     stock: '0',
     active: true,
     featured: false,
+    pretAPorter: false,
     sizes: [] as string[],
     colors: [] as string[],
   })
@@ -75,6 +76,7 @@ export default function ProduitEditPage() {
           stock: data.stock?.toString() || '0',
           active: data.active ?? true,
           featured: data.featured ?? false,
+          pretAPorter: data.pret_a_porter ?? false,
           sizes: Array.isArray(data.sizes) ? data.sizes : [],
           colors: Array.isArray(data.colors) ? data.colors : [],
         })
@@ -187,19 +189,26 @@ export default function ProduitEditPage() {
       stock: parseInt(form.stock) || 0,
       active: form.active,
       featured: form.featured,
+      pret_a_porter: form.pretAPorter,
       sizes: form.sizes,
       colors: form.colors,
       images,
     }
 
-    /* Si la colonne subcategory n'existe pas encore (script 07 non lancé),
-       on réessaie sans elle plutôt que d'échouer. */
+    /* Colonnes récentes (scripts 07 / 08). Si l'une n'existe pas encore en
+       base, on retire la ou les colonnes fautives et on réessaie. */
     async function saveWithFallback(fn: (p: Record<string, unknown>) => PromiseLike<{ data?: any; error: any }>) {
-      let res = await fn(payload)
-      if (res.error && String(res.error.message || '').includes('subcategory')) {
-        const { subcategory: _omit, ...rest } = payload as any
-        toast('Type non enregistré : lance le script 07 dans Supabase', { icon: '⚠️' })
-        res = await fn(rest)
+      const optional = ['subcategory', 'pret_a_porter']
+      let body: Record<string, unknown> = { ...payload }
+      let res = await fn(body)
+      let guard = 0
+      while (res.error && guard++ < optional.length) {
+        const msg = String(res.error.message || '')
+        const culprit = optional.find(col => msg.includes(col) && col in body)
+        if (!culprit) break
+        delete body[culprit]
+        toast(`« ${culprit} » non enregistré : lance le script SQL correspondant`, { icon: '⚠️' })
+        res = await fn(body)
       }
       return res
     }
@@ -451,6 +460,15 @@ export default function ProduitEditPage() {
               </button>
             </div>
             <p className="text-xs text-zinc-600 mt-2">{form.featured ? 'Affiché dans le slider Best Sellers' : 'Non mis en avant sur l\'accueil'}</p>
+
+            <div className="flex items-center justify-between mt-5 pt-5 border-t border-[#1e1e1e]">
+              <span className="text-sm text-zinc-300">Prêt à porter (accueil)</span>
+              <button onClick={() => update('pretAPorter', !form.pretAPorter)}
+                className={`relative w-11 h-6 rounded-full transition-colors ${form.pretAPorter ? 'bg-white' : 'bg-[#2a2a2a]'}`}>
+                <div className={`absolute top-0.5 w-5 h-5 rounded-full transition-transform bg-black ${form.pretAPorter ? 'translate-x-5' : 'translate-x-0.5'}`} />
+              </button>
+            </div>
+            <p className="text-xs text-zinc-600 mt-2">{form.pretAPorter ? 'Affiché dans la section « Prêt à porter »' : 'Pas dans la section « Prêt à porter »'}</p>
           </div>
 
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
