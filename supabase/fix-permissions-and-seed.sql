@@ -32,15 +32,13 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 
 
 -- 2) ─── CATÉGORIES ──────────────────────────────────────────
--- Les slugs DOIVENT correspondre à ceux attendus par le front
--- (sneakers, tshirts, hoodies, pants, jackets, accessories).
+-- Structure : 4 GRANDES catégories. Les types (T-shirts, Hoodies,
+-- Running...) sont des SOUS-catégories gérées dans l'admin.
 INSERT INTO categories (name, slug, description, sort_order, active) VALUES
-  ('Chaussures',  'sneakers',    'Sneakers, running, boots et slides.', 1, true),
-  ('T-shirts',    'tshirts',     'T-shirts et hauts en coton premium.', 2, true),
-  ('Hoodies',     'hoodies',     'Hoodies et sweatshirts.',             3, true),
-  ('Pantalons',   'pants',       'Pantalons, cargos et joggings.',      4, true),
-  ('Vestes',      'jackets',     'Vestes et bombers.',                  5, true),
-  ('Accessoires', 'accessories', 'Casquettes, sacs et accessoires.',    6, true)
+  ('Chaussures',  'sneakers',    'Sneakers, running, boots et slides.',          1, true),
+  ('Hauts',       'hauts',       'T-shirts, hoodies, sweatshirts et vestes.',    2, true),
+  ('Bas',         'pants',       'Pantalons, cargos, shorts et joggings.',       3, true),
+  ('Accessoires', 'accessories', 'Casquettes, sacs et accessoires.',             4, true)
 ON CONFLICT (slug) DO NOTHING;
 
 
@@ -66,7 +64,7 @@ INSERT INTO products (name, slug, description, brand, price, compare_price, cate
     '["img/prooduits/vans-lx-old-skool.webp"]', '[38,39,40,41,42,43,44,45]', '["Noir","Blanc"]', 15, true),
 
   ('T-shirt Menilo', 't-shirt-menilo', 'T-shirt Menilo en coton premium. Coupe regular, finitions soignées.', 'Menilo', 49, NULL,
-    (SELECT id FROM categories WHERE slug='tshirts'),
+    (SELECT id FROM categories WHERE slug='hauts'),
     '["img/prooduits/tshirt-menilo.jpg"]', '["S","M","L","XL","XXL"]', '["Noir","Blanc","Gris"]', 30, true),
 
   ('P6000', 'p6000', 'La Nike P-6000 au design rétro des années 2000. Confort et style urbain.', 'Nike', 119, NULL,
@@ -74,7 +72,7 @@ INSERT INTO products (name, slug, description, brand, price, compare_price, cate
     '["img/prooduits/nike-P6000.webp"]', '[40,41,42,43,44,45]', '["Blanc","Gris"]', 10, true),
 
   ('Essential Tee', 'essential-tee', 'Le T-shirt essentiel You1s. Coton épais 220g, coupe boxy légèrement oversize.', 'You1s', 49, 69,
-    (SELECT id FROM categories WHERE slug='tshirts'),
+    (SELECT id FROM categories WHERE slug='hauts'),
     '["img/prooduits/essential1.webp"]', '["XS","S","M","L","XL"]', '["Blanc","Noir","Gris"]', 25, true),
 
   ('ATM Pant', 'atm-pant', 'Le pantalon ATM You1s. Coupe carrot décontractée, taille élastiquée avec cordon.', 'You1s', 89, 119,
@@ -82,7 +80,7 @@ INSERT INTO products (name, slug, description, brand, price, compare_price, cate
     '["img/prooduits/atm-pant.webp"]', '["S","M","L","XL"]', '["Noir","Gris"]', 18, true),
 
   ('Hoodie Atelier', 'hoodie-atelier', 'Le hoodie Atelier de Menilo. Tissu lourd 420g, coupe oversized signature.', 'Menilo', 119, 149,
-    (SELECT id FROM categories WHERE slug='hoodies'),
+    (SELECT id FROM categories WHERE slug='hauts'),
     '["img/prooduits/atelier-menilo.jpg"]', '["S","M","L","XL","XXL"]', '["Beige","Gris","Noir"]', 14, true),
 
   ('Incontournable', 'incontournable', 'L''accessoire incontournable You1s. Finition premium, polyvalent.', 'You1s', 59, NULL,
@@ -92,13 +90,16 @@ ON CONFLICT (slug) DO NOTHING;
 
 
 -- 4) ─── MARQUES (carrousel logos) ───────────────────────────
-INSERT INTO brands (name, logo_url, sort_order, active) VALUES
-  ('Nike',        'img/brands/nike.png',       1, true),
-  ('Asics',       'img/brands/asics.png',      2, true),
-  ('Saucony',     'img/brands/saucony.png',    3, true),
-  ('New Balance', 'img/brands/newbalance.png', 4, true),
-  ('On',          'img/brands/on.png',         5, true)
-ON CONFLICT DO NOTHING;
+-- (guard anti-doublon : la table n'a pas de contrainte unique sur name)
+INSERT INTO brands (name, logo_url, sort_order, active)
+SELECT v.name, v.logo, v.ord, true FROM (VALUES
+  ('Nike',        'img/brands/nike.png',       1),
+  ('Asics',       'img/brands/asics.png',      2),
+  ('Saucony',     'img/brands/saucony.png',    3),
+  ('New Balance', 'img/brands/newbalance.png', 4),
+  ('On',          'img/brands/on.png',         5)
+) AS v(name, logo, ord)
+WHERE NOT EXISTS (SELECT 1 FROM brands b WHERE lower(b.name) = lower(v.name));
 
 
 -- 5) ─── VÉRIFICATION ────────────────────────────────────────

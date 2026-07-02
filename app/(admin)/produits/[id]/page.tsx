@@ -11,7 +11,7 @@ import toast from 'react-hot-toast'
 const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45', '46']
 const STORAGE_BUCKET = 'products'
 
-type Category = { id: string; name: string }
+type Category = { id: string; name: string; subcats?: { name: string; image?: string | null }[] }
 
 export default function ProduitEditPage() {
   const { id } = useParams()
@@ -35,6 +35,7 @@ export default function ProduitEditPage() {
     costPrice: '',
     sku: '',
     category_id: '',
+    subcategory: '',
     stock: '0',
     active: true,
     featured: false,
@@ -44,8 +45,8 @@ export default function ProduitEditPage() {
 
   useEffect(() => {
     async function init() {
-      const { data: cats } = await supabase.from('categories').select('id, name').eq('active', true).order('name')
-      setCategories(cats || [])
+      const { data: cats } = await supabase.from('categories').select('id, name, subcats').eq('active', true).order('sort_order')
+      setCategories((cats || []).map((c: any) => ({ ...c, subcats: Array.isArray(c.subcats) ? c.subcats : [] })))
 
       if (!isNew) {
         const { data, error } = await supabase.from('products').select('*').eq('id', id).single()
@@ -59,6 +60,7 @@ export default function ProduitEditPage() {
           costPrice: data.cost_price?.toString() || '',
           sku: data.sku || '',
           category_id: data.category_id || '',
+          subcategory: data.subcategory || '',
           stock: data.stock?.toString() || '0',
           active: data.active ?? true,
           featured: data.featured ?? false,
@@ -157,6 +159,7 @@ export default function ProduitEditPage() {
       cost_price: form.costPrice ? parseFloat(form.costPrice) : null,
       sku: form.sku || null,
       category_id: form.category_id || null,
+      subcategory: form.subcategory || null,
       stock: parseInt(form.stock) || 0,
       active: form.active,
       featured: form.featured,
@@ -165,9 +168,21 @@ export default function ProduitEditPage() {
       images,
     }
 
+    /* Si la colonne subcategory n'existe pas encore (script 07 non lancé),
+       on réessaie sans elle plutôt que d'échouer. */
+    async function saveWithFallback(fn: (p: Record<string, unknown>) => PromiseLike<{ data?: any; error: any }>) {
+      let res = await fn(payload)
+      if (res.error && String(res.error.message || '').includes('subcategory')) {
+        const { subcategory: _omit, ...rest } = payload as any
+        toast('Type non enregistré : lance le script 07 dans Supabase', { icon: '⚠️' })
+        res = await fn(rest)
+      }
+      return res
+    }
+
     if (isNew) {
-      const { data: created, error } = await supabase.from('products').insert(payload).select('id').single()
-      if (error) { toast.error('Erreur lors de la création'); setSaving(false); return }
+      const { data: created, error } = await saveWithFallback(p => supabase.from('products').insert(p).select('id').single())
+      if (error) { toast.error(`Erreur lors de la création : ${error.message}`); setSaving(false); return }
 
       // Rename uploaded images from 'new/' to actual product id
       if (images.length > 0 && created?.id) {
@@ -192,8 +207,8 @@ export default function ProduitEditPage() {
       toast.success('Produit créé !')
       router.push('/produits')
     } else {
-      const { error } = await supabase.from('products').update(payload).eq('id', id)
-      if (error) { toast.error('Erreur lors de la sauvegarde'); setSaving(false); return }
+      const { error } = await saveWithFallback(p => supabase.from('products').update(p).eq('id', id).select('id').single())
+      if (error) { toast.error(`Erreur lors de la sauvegarde : ${error.message}`); setSaving(false); return }
       toast.success('Produit mis à jour !')
       setSaving(false)
     }
@@ -375,11 +390,31 @@ export default function ProduitEditPage() {
 
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
             <h2 className="text-white font-semibold text-sm mb-5">Catégorie</h2>
-            <select value={form.category_id} onChange={e => update('category_id', e.target.value)}
+            <select value={form.category_id}
+              onChange={e => { update('category_id', e.target.value); update('subcategory', '') }}
               className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors">
               <option value="">Choisir...</option>
               {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
+
+            {(() => {
+              const selected = categories.find(c => c.id === form.category_id)
+              const subs = selected?.subcats || []
+              if (!subs.length) return null
+              const known = subs.some(s => s.name === form.subcategory)
+              return (
+                <div className="mt-4">
+                  <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1.5 block">Type</label>
+                  <select value={form.subcategory} onChange={e => update('subcategory', e.target.value)}
+                    className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors">
+                    <option value="">Aucun (visible dans toute la catégorie)</option>
+                    {!known && form.subcategory && <option value={form.subcategory}>{form.subcategory}</option>}
+                    {subs.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+                  </select>
+                  <p className="text-[11px] text-zinc-600 mt-2">Ex : un hoodie → catégorie « Hauts », type « Hoodies »</p>
+                </div>
+              )
+            })()}
           </div>
 
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
