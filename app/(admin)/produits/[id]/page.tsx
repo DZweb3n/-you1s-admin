@@ -41,6 +41,7 @@ export default function ProduitEditPage() {
     name: '',
     brand: '',
     description: '',
+    material: '',
     price: '',
     comparePrice: '',
     costPrice: '',
@@ -67,6 +68,7 @@ export default function ProduitEditPage() {
           name: data.name || '',
           brand: data.brand || '',
           description: data.description || '',
+          material: data.material || '',
           price: data.price?.toString() || '',
           comparePrice: data.compare_price?.toString() || '',
           costPrice: data.cost_price?.toString() || '',
@@ -181,6 +183,7 @@ export default function ProduitEditPage() {
       slug: slugify(form.name),
       brand: form.brand,
       description: form.description,
+      material: form.material || null,
       price: parseFloat(form.price),
       compare_price: form.comparePrice ? parseFloat(form.comparePrice) : null,
       cost_price: form.costPrice ? parseFloat(form.costPrice) : null,
@@ -199,7 +202,7 @@ export default function ProduitEditPage() {
     /* Colonnes récentes (scripts 07 / 08). Si l'une n'existe pas encore en
        base, on retire la ou les colonnes fautives et on réessaie. */
     async function saveWithFallback(fn: (p: Record<string, unknown>) => PromiseLike<{ data?: any; error: any }>) {
-      const optional = ['subcategory', 'pret_a_porter']
+      const optional = ['subcategory', 'pret_a_porter', 'material']
       let body: Record<string, unknown> = { ...payload }
       let res = await fn(body)
       let guard = 0
@@ -347,6 +350,12 @@ export default function ProduitEditPage() {
                 <textarea value={form.description} onChange={e => update('description', e.target.value)} rows={4}
                   className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors placeholder:text-zinc-600 resize-none"
                   placeholder="Description du produit..." />
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1.5 block">Matière / Composition</label>
+                <input value={form.material} onChange={e => update('material', e.target.value)}
+                  className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors placeholder:text-zinc-600"
+                  placeholder="Ex : Mesh / GEL, 100% Coton 220g…" />
               </div>
             </div>
           </div>
