@@ -8,6 +8,11 @@ export const dynamic = 'force-dynamic'
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://you-1s.com'
 const FREE_SHIPPING_THRESHOLD = 100
 const SHIPPING_FLAT = 5.9
+const SHIPPING_EXPRESS = 9.9
+
+/* Pays où l'on livre (Stripe affiche le sélecteur d'adresse pour ces pays) */
+const ALLOWED_COUNTRIES: Stripe.Checkout.SessionCreateParams.ShippingAddressCollection.AllowedCountry[] =
+  ['FR', 'BE', 'LU', 'MC']
 
 type CartItem = { id: string; size?: string; qty: number }
 
@@ -33,14 +38,7 @@ export async function POST(req: Request) {
     if (!body) return jsonCors({ error: 'Requête invalide.' }, origin, 400)
 
     const items: CartItem[] = Array.isArray(body.items) ? body.items : []
-    const customer = body.customer || {}
-    const shipping = body.shipping || {}
-
     if (!items.length) return jsonCors({ error: 'Panier vide.' }, origin, 400)
-    if (!customer.email || !customer.name)
-      return jsonCors({ error: 'Nom et email requis.' }, origin, 400)
-    if (!shipping.address || !shipping.zip || !shipping.city)
-      return jsonCors({ error: 'Adresse de livraison incomplète.' }, origin, 400)
 
     const supabase = createAdminClient()
 
@@ -74,11 +72,7 @@ export async function POST(req: Request) {
       if (!p || p.active === false)
         return jsonCors({ error: `Un article n'est plus disponible.` }, origin, 409)
       if (typeof p.stock === 'number' && p.stock < qty)
-        return jsonCors(
-          { error: `Stock insuffisant pour ${p.name}.` },
-          origin,
-          409
-        )
+        return jsonCors({ error: `Stock insuffisant pour ${p.name}.` }, origin, 409)
 
       const price = Number(p.price)
       subtotal += price * qty
@@ -112,32 +106,23 @@ export async function POST(req: Request) {
     const promoCode = String(body.promo || '').trim().toUpperCase()
     const PROMOS: Record<string, number> = { YOU1S10: 10, YOU1S20: 20 }
     const promoPct = PROMOS[promoCode] || 0
-    const discount = promoPct > 0 ? Math.round(subtotal * promoPct) / 100 : 0
 
-    const shippingCost = subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_FLAT
-    const total = subtotal - discount + shippingCost
     const number = orderNumber()
 
-    // ── Commande créée en "pending" (non payée) avant redirection Stripe ──
+    // ── Commande créée en "pending". L'adresse + le client seront remplis par le
+    //    webhook à partir de ce que Stripe aura collecté (colonnes NOT NULL → placeholders). ──
     const { data: order, error: orderErr } = await supabase
       .from('orders')
       .insert({
         order_number: number,
-        customer_email: String(customer.email).trim(),
-        customer_name: String(customer.name).trim(),
-        customer_phone: customer.phone ? String(customer.phone).trim() : null,
-        shipping_address: {
-          address: shipping.address,
-          zip: shipping.zip,
-          city: shipping.city,
-          name: customer.name,
-          phone: customer.phone || null,
-        },
+        customer_email: '',
+        customer_name: 'En attente (paiement Stripe)',
+        shipping_address: {},
         items: orderItems,
         subtotal,
-        shipping: shippingCost,
-        discount,
-        total,
+        shipping: 0,
+        discount: 0,
+        total: subtotal, // recalculé par le webhook avec livraison + promo réels
         status: 'pending',
         paid: false,
         notes: 'En attente de paiement (Stripe)',
@@ -150,10 +135,44 @@ export async function POST(req: Request) {
 
     const stripe = new Stripe(secret)
 
+    // ── Modes de livraison proposés SUR la page Stripe (comme un checkout Shopify) ──
+    const standardAmount =
+      subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : Math.round(SHIPPING_FLAT * 100)
+    const shipping_options: Stripe.Checkout.SessionCreateParams.ShippingOption[] = [
+      {
+        shipping_rate_data: {
+          type: 'fixed_amount',
+          display_name:
+            standardAmount === 0 ? 'Livraison offerte (3–5 jours)' : 'Livraison standard (3–5 jours)',
+          fixed_amount: { amount: standardAmount, currency: 'eur' },
+          delivery_estimate: {
+            minimum: { unit: 'business_day', value: 3 },
+            maximum: { unit: 'business_day', value: 5 },
+          },
+        },
+      },
+      {
+        shipping_rate_data: {
+          type: 'fixed_amount',
+          display_name: 'Livraison express (24–48h)',
+          fixed_amount: { amount: Math.round(SHIPPING_EXPRESS * 100), currency: 'eur' },
+          delivery_estimate: {
+            minimum: { unit: 'business_day', value: 1 },
+            maximum: { unit: 'business_day', value: 2 },
+          },
+        },
+      },
+    ]
+
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: 'payment',
       line_items: lineItems,
-      customer_email: String(customer.email).trim(),
+      // Stripe collecte lui-même l'adresse, le téléphone et l'email :
+      shipping_address_collection: { allowed_countries: ALLOWED_COUNTRIES },
+      billing_address_collection: 'auto',
+      phone_number_collection: { enabled: true },
+      shipping_options,
+      // Apple Pay / Google Pay / Link s'affichent automatiquement (aucune config).
       metadata: { order_id: order.id, order_number: order.order_number },
       success_url: `${SITE_URL}/merci.html?order=${encodeURIComponent(order.order_number)}`,
       cancel_url: `${SITE_URL}/panier.html?canceled=1`,
@@ -168,28 +187,17 @@ export async function POST(req: Request) {
       sessionParams.discounts = [{ coupon: coupon.id }]
     }
 
-    if (shippingCost > 0) {
-      sessionParams.shipping_options = [
-        {
-          shipping_rate_data: {
-            type: 'fixed_amount',
-            display_name: 'Livraison standard',
-            fixed_amount: { amount: Math.round(shippingCost * 100), currency: 'eur' },
-          },
-        },
-      ]
-    }
-
     const session = await stripe.checkout.sessions.create(sessionParams)
 
-    await supabase
-      .from('orders')
-      .update({ stripe_session_id: session.id })
-      .eq('id', order.id)
+    await supabase.from('orders').update({ stripe_session_id: session.id }).eq('id', order.id)
 
     return jsonCors({ url: session.url }, origin, 200)
   } catch (e: any) {
     console.error('[checkout] error', e?.message || e)
-    return jsonCors({ error: 'Le paiement est momentanément indisponible, réessayez dans un instant.' }, origin, 500)
+    return jsonCors(
+      { error: 'Le paiement est momentanément indisponible, réessayez dans un instant.' },
+      origin,
+      500
+    )
   }
 }

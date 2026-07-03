@@ -38,6 +38,34 @@ export async function POST(req: Request) {
     if (orderId && isPaid) {
       try {
         const supabase = createAdminClient()
+
+        // ── Coordonnées + adresse collectées PAR Stripe ──
+        const details = session.customer_details
+        // selon la version de l'API, l'adresse de livraison est dans shipping_details
+        // ou collected_information.shipping_details
+        const ship: any =
+          (session as any).shipping_details ||
+          (session as any).collected_information?.shipping_details ||
+          null
+        const addr = ship?.address || details?.address || null
+
+        const shippingAddress = addr
+          ? {
+              name: ship?.name || details?.name || '',
+              phone: details?.phone || '',
+              address: [addr.line1, addr.line2].filter(Boolean).join(', '),
+              zip: addr.postal_code || '',
+              city: addr.city || '',
+              country: addr.country || '',
+            }
+          : {}
+
+        // ── Montants réels (livraison choisie + promo appliqués par Stripe) ──
+        const td = session.total_details
+        const shippingCost = td?.amount_shipping != null ? td.amount_shipping / 100 : 0
+        const discount = td?.amount_discount != null ? td.amount_discount / 100 : 0
+        const total = session.amount_total != null ? session.amount_total / 100 : undefined
+
         // pending → confirmed déclenche le trigger de décrément du stock.
         const { error } = await supabase
           .from('orders')
@@ -45,6 +73,13 @@ export async function POST(req: Request) {
             paid: true,
             status: 'confirmed',
             notes: 'Payé via Stripe',
+            customer_email: details?.email || '',
+            customer_name: details?.name || shippingAddress.name || 'Client',
+            customer_phone: details?.phone || null,
+            shipping_address: shippingAddress,
+            shipping: shippingCost,
+            discount,
+            ...(total != null ? { total } : {}),
           })
           .eq('id', orderId)
           .eq('status', 'pending') // idempotent : ne re-confirme pas une commande déjà traitée
