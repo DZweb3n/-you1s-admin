@@ -189,9 +189,7 @@ export async function POST(req: Request) {
 
     return jsonCors({ url: session.url }, origin, 200)
   } catch (e: any) {
-    const detail = e?.message || String(e)
-    console.error('[checkout] error', detail)
-    // detail non sensible (message d'erreur technique) — aide au diagnostic côté client
-    return jsonCors({ error: 'Erreur serveur.', detail }, origin, 500)
+    console.error('[checkout] error', e?.message || e)
+    return jsonCors({ error: 'Le paiement est momentanément indisponible, réessayez dans un instant.' }, origin, 500)
   }
 }
