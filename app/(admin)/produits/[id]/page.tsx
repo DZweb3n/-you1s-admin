@@ -8,7 +8,7 @@ import { createClient } from '@/lib/supabase'
 import { slugify } from '@/lib/utils'
 import toast from 'react-hot-toast'
 
-const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '36', '37', '38', '39', '40', '41', '42', '43', '44', '45', '46']
+const SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '36', '36.5', '37', '37.5', '38', '38.5', '39', '39.5', '40', '40.5', '41', '41.5', '42', '42.5', '43', '43.5', '44', '44.5', '45', '45.5', '46']
 const STORAGE_BUCKET = 'products'
 
 const COLOR_PRESETS = ['Noir', 'Blanc', 'Gris', 'Beige', 'Bleu', 'Rouge', 'Vert', 'Marron', 'Marine', 'Kaki', 'Rose', 'Bordeaux']
