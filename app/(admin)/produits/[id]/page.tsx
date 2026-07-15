@@ -31,6 +31,8 @@ export default function ProduitEditPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [categories, setCategories] = useState<Category[]>([])
+  const [brandOptions, setBrandOptions] = useState<string[]>([])
+  const [newBrandMode, setNewBrandMode] = useState(false)
   const [loading, setLoading] = useState(!isNew)
   const [saving, setSaving] = useState(false)
   const [uploadingImage, setUploadingImage] = useState(false)
@@ -60,6 +62,19 @@ export default function ProduitEditPage() {
     async function init() {
       const { data: cats } = await supabase.from('categories').select('id, name, subcats').eq('active', true).order('sort_order')
       setCategories((cats || []).map((c: any) => ({ ...c, subcats: Array.isArray(c.subcats) ? c.subcats : [] })))
+
+      /* Marques proposées : table Marques + marques déjà utilisées par les produits
+         (dédoublonnées sans tenir compte de la casse ni des espaces) */
+      const [{ data: brandRows }, { data: prodBrands }] = await Promise.all([
+        supabase.from('brands').select('name').order('sort_order'),
+        supabase.from('products').select('brand'),
+      ])
+      const seen = new Map<string, string>()
+      ;[...(brandRows || []).map((b: any) => b.name), ...(prodBrands || []).map((p: any) => p.brand)]
+        .map((n: any) => String(n || '').trim())
+        .filter(Boolean)
+        .forEach(n => { const k = n.toLowerCase(); if (!seen.has(k)) seen.set(k, n) })
+      setBrandOptions(Array.from(seen.values()).sort((a, b) => a.localeCompare(b, 'fr')))
 
       if (!isNew) {
         const { data, error } = await supabase.from('products').select('*').eq('id', id).single()
@@ -181,7 +196,7 @@ export default function ProduitEditPage() {
     const payload = {
       name: form.name,
       slug: slugify(form.name),
-      brand: form.brand,
+      brand: form.brand.trim(),
       description: form.description,
       material: form.material || null,
       price: parseFloat(form.price),
@@ -335,9 +350,30 @@ export default function ProduitEditPage() {
               </div>
               <div>
                 <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1.5 block">Marque</label>
-                <input value={form.brand} onChange={e => update('brand', e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors placeholder:text-zinc-600"
-                  placeholder="Nike, Asics..." />
+                {newBrandMode ? (
+                  <div className="flex gap-2">
+                    <input value={form.brand} onChange={e => update('brand', e.target.value)} autoFocus
+                      className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors placeholder:text-zinc-600"
+                      placeholder="Nom de la nouvelle marque" />
+                    <button type="button" onClick={() => { setNewBrandMode(false); update('brand', '') }}
+                      className="text-xs text-zinc-500 hover:text-white px-2 flex-shrink-0" title="Revenir à la liste">✕</button>
+                  </div>
+                ) : (
+                  <select
+                    value={brandOptions.find(b => b.toLowerCase() === form.brand.trim().toLowerCase()) || form.brand.trim()}
+                    onChange={e => {
+                      if (e.target.value === '__new__') { setNewBrandMode(true); update('brand', '') }
+                      else update('brand', e.target.value)
+                    }}
+                    className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors cursor-pointer">
+                    <option value="">— Sans marque —</option>
+                    {brandOptions.map(b => <option key={b} value={b}>{b}</option>)}
+                    {form.brand.trim() && !brandOptions.some(b => b.toLowerCase() === form.brand.trim().toLowerCase()) && (
+                      <option value={form.brand.trim()}>{form.brand.trim()}</option>
+                    )}
+                    <option value="__new__">➕ Nouvelle marque…</option>
+                  </select>
+                )}
               </div>
               <div>
                 <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1.5 block">SKU</label>
