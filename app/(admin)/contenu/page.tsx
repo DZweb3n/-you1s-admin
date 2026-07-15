@@ -156,6 +156,7 @@ export default function ContenuPage() {
                           <input
                             value={item.value || ''}
                             onChange={e => updateValue(item.key, e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); saveItem({ ...item, value: (e.target as HTMLInputElement).value }) } }}
                             className="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors"
                           />
                         )}
