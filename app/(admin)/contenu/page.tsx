@@ -22,45 +22,9 @@ export default function ContenuPage() {
   const [uploading, setUploading] = useState<string | null>(null)
   const supabase = createClient()
 
-  /* Lit les dimensions réelles (px) d'un fichier image avant upload */
-  function readImageSize(file: File): Promise<{ w: number; h: number }> {
-    return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(file)
-      const img = new Image()
-      img.onload = () => { URL.revokeObjectURL(url); resolve({ w: img.naturalWidth, h: img.naturalHeight }) }
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('illisible')) }
-      img.src = url
-    })
-  }
-
   async function uploadImage(item: ContentItem, file: File) {
     if (!file.type.startsWith('image/')) return toast.error("Ce fichier n'est pas une image")
     if (file.size > 5 * 1024 * 1024) return toast.error('Image trop lourde (max 5 Mo)')
-
-    /* ── Contrôle des dimensions avant upload ── */
-    try {
-      const { w, h } = await readImageSize(file)
-      if (item.key.startsWith('hero_slide_')) {
-        /* Slider d'accueil : image plein écran → minimum strict */
-        if (w < 1600 || h < 1000) {
-          return toast.error(
-            `Image trop petite : ${w}×${h} px. Le slider d'accueil demande au minimum 1600×1000 px (idéal : 1920×1200 px, sujet centré).`,
-            { duration: 8000 }
-          )
-        }
-        if (h > w) {
-          toast(`Photo verticale (${w}×${h} px) : sur ordinateur elle sera très recadrée. Préférez un format paysage 1920×1200 px.`, { icon: '⚠️', duration: 8000 })
-        }
-      } else if (w < 600) {
-        return toast.error(`Image trop petite : ${w}×${h} px. Minimum 600 px de large pour un rendu net.`, { duration: 6000 })
-      }
-      if (file.size > 1.5 * 1024 * 1024) {
-        toast(`Image lourde (${(file.size / 1024 / 1024).toFixed(1)} Mo) : le site chargera plus vite si vous la compressez d'abord sur squoosh.app`, { icon: '⚠️', duration: 7000 })
-      }
-    } catch {
-      return toast.error('Impossible de lire cette image — fichier corrompu ?')
-    }
-
     setUploading(item.key)
     const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
     const path = `content/${item.key}-${Date.now()}.${ext}`
