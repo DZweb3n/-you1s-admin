@@ -66,6 +66,27 @@ export default function ContenuPage() {
     else toast.success('Contenu mis à jour')
   }
 
+  async function saveValue(key: string, value: string) {
+    updateValue(key, value)
+    setSaving(key)
+    const { error } = await supabase
+      .from('site_content')
+      .update({ value, updated_at: new Date().toISOString() })
+      .eq('key', key)
+    setSaving(null)
+    if (error) toast.error('Erreur lors de la sauvegarde')
+    else toast.success('Contenu mis à jour')
+  }
+
+  /* Ordre d'affichage des champs d'une slide : photo → titre → sous-titre → couleur */
+  function fieldWeight(key: string) {
+    if (key.endsWith('_image')) return 0
+    if (key.endsWith('_title')) return 1
+    if (key.endsWith('_subtitle')) return 2
+    if (key.endsWith('_theme')) return 3
+    return 4
+  }
+
   const sections = Array.from(new Set(items.map(i => i.section)))
 
   return (
@@ -86,7 +107,7 @@ export default function ContenuPage() {
             <div key={section} className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
               <h2 className="text-white font-semibold text-sm mb-5">{section}</h2>
               <div className="space-y-4">
-                {items.filter(i => i.section === section).map(item => (
+                {items.filter(i => i.section === section).sort((a, b) => fieldWeight(a.key) - fieldWeight(b.key)).map(item => (
                   <div key={item.key}>
                     <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1.5 block">{item.label}</label>
 
@@ -106,6 +127,17 @@ export default function ContenuPage() {
                           </label>
                           <p className="text-[11px] text-zinc-600 mt-2">JPG, PNG, WEBP · Max 5 Mo</p>
                         </div>
+                      </div>
+                    ) : item.key.endsWith('_theme') ? (
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={item.value || 'blanc'}
+                          onChange={e => saveValue(item.key, e.target.value)}
+                          className="bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors cursor-pointer">
+                          <option value="blanc">Blanc — pour une photo sombre</option>
+                          <option value="noir">Noir — pour une photo claire</option>
+                        </select>
+                        {saving === item.key && <Loader2 size={14} className="animate-spin text-zinc-500" />}
                       </div>
                     ) : (
                       <div className="flex gap-2">
