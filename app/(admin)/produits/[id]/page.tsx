@@ -227,9 +227,12 @@ export default function ProduitEditPage() {
       sku: form.sku || null,
       category_id: form.category_id || null,
       subcategory: form.subcategory || null,
-      /* Si le stock par taille est renseigné, le stock global = la somme */
+      /* Si le stock par taille est renseigné, le stock global = la somme.
+         Rien de saisi → {} : la fiche produit garde son affichage prix. */
       stock: sizeStockFilled() ? sizeStockTotal() : (parseInt(form.stock) || 0),
-      size_stock: Object.fromEntries(form.sizes.map(s => [s, parseInt(form.sizeStock[s] || '0') || 0])),
+      size_stock: sizeStockFilled()
+        ? Object.fromEntries(form.sizes.map(s => [s, parseInt(form.sizeStock[s] || '0') || 0]))
+        : {},
       active: form.active,
       featured: form.featured,
       pret_a_porter: form.pretAPorter,
