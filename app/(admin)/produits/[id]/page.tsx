@@ -54,6 +54,7 @@ export default function ProduitEditPage() {
     active: true,
     featured: false,
     pretAPorter: false,
+    heroSlide: '',   // '' = aucun, '1'..'5' = slide d'accueil lié au bouton
     sizes: [] as string[],
     colors: [] as string[],
     sizeStock: {} as Record<string, string>,
@@ -95,6 +96,7 @@ export default function ProduitEditPage() {
           active: data.active ?? true,
           featured: data.featured ?? false,
           pretAPorter: data.pret_a_porter ?? false,
+          heroSlide: data.hero_slide != null ? String(data.hero_slide) : '',
           // Normalise en texte (la base peut stocker des nombres) + dédoublonne
           sizes: Array.from(new Set((Array.isArray(data.sizes) ? data.sizes : []).map((s: any) => String(s)))),
           colors: Array.from(new Set((Array.isArray(data.colors) ? data.colors : []).map((c: any) => String(c)))),
@@ -236,6 +238,7 @@ export default function ProduitEditPage() {
       active: form.active,
       featured: form.featured,
       pret_a_porter: form.pretAPorter,
+      hero_slide: form.heroSlide ? parseInt(form.heroSlide) : null,
       sizes: Array.from(new Set(form.sizes.map(s => String(s)))),
       colors: Array.from(new Set(form.colors.map(c => String(c)))),
       images,
@@ -244,7 +247,7 @@ export default function ProduitEditPage() {
     /* Colonnes récentes (scripts 07 / 08). Si l'une n'existe pas encore en
        base, on retire la ou les colonnes fautives et on réessaie. */
     async function saveWithFallback(fn: (p: Record<string, unknown>) => PromiseLike<{ data?: any; error: any }>) {
-      const optional = ['subcategory', 'pret_a_porter', 'material', 'size_stock']
+      const optional = ['subcategory', 'pret_a_porter', 'material', 'size_stock', 'hero_slide']
       let body: Record<string, unknown> = { ...payload }
       let res = await fn(body)
       let guard = 0
@@ -566,6 +569,24 @@ export default function ProduitEditPage() {
               </button>
             </div>
             <p className="text-xs text-zinc-600 mt-2">{form.pretAPorter ? 'Affiché dans la section « Prêt à porter »' : 'Pas dans la section « Prêt à porter »'}</p>
+
+            <div className="mt-5 pt-5 border-t border-[#1e1e1e]">
+              <span className="text-sm text-zinc-300">Slide d&apos;accueil (bouton Découvrir)</span>
+              <select value={form.heroSlide} onChange={e => update('heroSlide', e.target.value)}
+                className="w-full mt-2 bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors">
+                <option value="">Aucun</option>
+                <option value="1">Slide 1</option>
+                <option value="2">Slide 2</option>
+                <option value="3">Slide 3</option>
+                <option value="4">Slide 4</option>
+                <option value="5">Slide 5</option>
+              </select>
+              <p className="text-xs text-zinc-600 mt-2">
+                {form.heroSlide
+                  ? `Le bouton « Découvrir » du Slide ${form.heroSlide} mènera à ce produit.`
+                  : 'Le bouton du slide garde son lien par défaut. (Repère le numéro dans Contenu → Slider accueil.)'}
+              </p>
+            </div>
           </div>
 
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
