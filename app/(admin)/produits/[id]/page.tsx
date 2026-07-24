@@ -56,6 +56,7 @@ export default function ProduitEditPage() {
     pretAPorter: false,
     sizes: [] as string[],
     colors: [] as string[],
+    sizeStock: {} as Record<string, string>,
   })
 
   useEffect(() => {
@@ -97,6 +98,9 @@ export default function ProduitEditPage() {
           // Normalise en texte (la base peut stocker des nombres) + dédoublonne
           sizes: Array.from(new Set((Array.isArray(data.sizes) ? data.sizes : []).map((s: any) => String(s)))),
           colors: Array.from(new Set((Array.isArray(data.colors) ? data.colors : []).map((c: any) => String(c)))),
+          sizeStock: (data.size_stock && typeof data.size_stock === 'object')
+            ? Object.fromEntries(Object.entries(data.size_stock).map(([k, v]) => [String(k), String(v ?? '')]))
+            : {},
         })
         setImages(Array.isArray(data.images) ? data.images : [])
         setLoading(false)
@@ -110,10 +114,28 @@ export default function ProduitEditPage() {
   }
 
   function toggleSize(size: string) {
-    setForm(prev => ({
-      ...prev,
-      sizes: prev.sizes.includes(size) ? prev.sizes.filter(s => s !== size) : [...prev.sizes, size]
-    }))
+    setForm(prev => {
+      const removing = prev.sizes.includes(size)
+      const nextStock = { ...prev.sizeStock }
+      if (removing) delete nextStock[size]
+      return {
+        ...prev,
+        sizes: removing ? prev.sizes.filter(s => s !== size) : [...prev.sizes, size],
+        sizeStock: nextStock,
+      }
+    })
+  }
+
+  function updateSizeStock(size: string, value: string) {
+    setForm(prev => ({ ...prev, sizeStock: { ...prev.sizeStock, [size]: value } }))
+  }
+
+  /* Stock par taille rempli ? → le stock global devient la somme */
+  function sizeStockFilled() {
+    return form.sizes.some(s => (form.sizeStock[s] ?? '') !== '')
+  }
+  function sizeStockTotal() {
+    return form.sizes.reduce((sum, s) => sum + (parseInt(form.sizeStock[s] || '0') || 0), 0)
   }
 
   function addColor(raw: string) {
@@ -205,7 +227,9 @@ export default function ProduitEditPage() {
       sku: form.sku || null,
       category_id: form.category_id || null,
       subcategory: form.subcategory || null,
-      stock: parseInt(form.stock) || 0,
+      /* Si le stock par taille est renseigné, le stock global = la somme */
+      stock: sizeStockFilled() ? sizeStockTotal() : (parseInt(form.stock) || 0),
+      size_stock: Object.fromEntries(form.sizes.map(s => [s, parseInt(form.sizeStock[s] || '0') || 0])),
       active: form.active,
       featured: form.featured,
       pret_a_porter: form.pretAPorter,
@@ -217,7 +241,7 @@ export default function ProduitEditPage() {
     /* Colonnes récentes (scripts 07 / 08). Si l'une n'existe pas encore en
        base, on retire la ou les colonnes fautives et on réessaie. */
     async function saveWithFallback(fn: (p: Record<string, unknown>) => PromiseLike<{ data?: any; error: any }>) {
-      const optional = ['subcategory', 'pret_a_porter', 'material']
+      const optional = ['subcategory', 'pret_a_porter', 'material', 'size_stock']
       let body: Record<string, unknown> = { ...payload }
       let res = await fn(body)
       let guard = 0
@@ -441,6 +465,30 @@ export default function ProduitEditPage() {
                 </button>
               ))}
             </div>
+
+            {/* Stock par taille — affiché sur le site sous chaque taille */}
+            {form.sizes.length > 0 && (
+              <div className="mt-6 pt-5 border-t border-[#1e1e1e]">
+                <p className="text-xs text-zinc-400 mb-1 font-medium">Stock par taille</p>
+                <p className="text-[11px] text-zinc-600 mb-4">Affiché sur la fiche produit. Une taille à 0 apparaît « Épuisé ». Le stock global du produit devient la somme.</p>
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  {[...form.sizes].sort((a, b) => (parseFloat(a) || 999) - (parseFloat(b) || 999) || a.localeCompare(b)).map(size => (
+                    <div key={size} className="flex items-center gap-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg px-2.5 py-2">
+                      <span className="text-xs font-semibold text-white w-8 shrink-0">{size}</span>
+                      <input
+                        type="number" min={0} placeholder="0"
+                        value={form.sizeStock[size] ?? ''}
+                        onChange={e => updateSizeStock(size, e.target.value)}
+                        className="w-full bg-transparent text-sm text-white outline-none placeholder:text-zinc-600 text-right"
+                      />
+                    </div>
+                  ))}
+                </div>
+                {sizeStockFilled() && (
+                  <p className="text-xs text-zinc-500 mt-3">Total : <span className="text-white font-medium">{sizeStockTotal()}</span> unité{sizeStockTotal() > 1 ? 's' : ''}</p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Couleurs */}
@@ -548,10 +596,22 @@ export default function ProduitEditPage() {
 
           <div className="bg-[#111] border border-[#1e1e1e] rounded-2xl p-6">
             <h2 className="text-white font-semibold text-sm mb-5">Stock</h2>
-            <input type="number" value={form.stock} onChange={e => update('stock', e.target.value)} min={0}
-              className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors" />
-            {parseInt(form.stock) === 0 && (
-              <p className="text-xs text-red-400 mt-2">Produit en rupture de stock</p>
+            {sizeStockFilled() ? (
+              <div>
+                <div className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl opacity-70">{sizeStockTotal()}</div>
+                <p className="text-xs text-zinc-500 mt-2">Calculé automatiquement (somme du stock par taille)</p>
+                {sizeStockTotal() === 0 && (
+                  <p className="text-xs text-red-400 mt-1">Produit en rupture de stock</p>
+                )}
+              </div>
+            ) : (
+              <div>
+                <input type="number" value={form.stock} onChange={e => update('stock', e.target.value)} min={0}
+                  className="w-full bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-4 py-3 rounded-xl outline-none focus:border-white/30 transition-colors" />
+                {parseInt(form.stock) === 0 && (
+                  <p className="text-xs text-red-400 mt-2">Produit en rupture de stock</p>
+                )}
+              </div>
             )}
           </div>
 
