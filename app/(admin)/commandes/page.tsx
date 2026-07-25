@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { Search, Package, Truck, Check, X, Clock, RotateCcw, Loader2 } from 'lucide-react'
+import { Search, Package, Truck, Check, X, Clock, RotateCcw, Loader2, Printer } from 'lucide-react'
 import Header from '@/components/Header'
 import { ORDER_STATUSES, formatPrice, formatDate } from '@/lib/utils'
 import { createClient } from '@/lib/supabase'
@@ -23,6 +23,18 @@ type Order = {
   shipping_address: any
   tracking_number: string | null
   notes: string | null
+  boxtal_ref?: string | null
+  carrier?: string | null
+  shipping_weight?: number | null
+}
+
+type Offer = {
+  operator: string
+  operatorLabel: string
+  service: string
+  serviceLabel: string
+  priceTTC: number
+  deliveryLabel: string
 }
 
 export default function CommandesPage() {
@@ -32,6 +44,10 @@ export default function CommandesPage() {
   const [loading, setLoading] = useState(true)
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [trackingInput, setTrackingInput] = useState('')
+  const [weight, setWeight] = useState('2')
+  const [offers, setOffers] = useState<Offer[]>([])
+  const [quoting, setQuoting] = useState(false)
+  const [shipping, setShipping] = useState(false)
   const supabase = createClient()
 
   async function load() {
@@ -69,6 +85,52 @@ export default function CommandesPage() {
     setOrders(prev => prev.map(o => o.id === id ? { ...o, tracking_number: trackingInput } : o))
     if (selectedOrder?.id === id) setSelectedOrder(prev => prev ? { ...prev, tracking_number: trackingInput } : null)
     toast.success('Numéro de suivi enregistré')
+  }
+
+  function selectOrder(o: Order) {
+    setSelectedOrder(o)
+    setTrackingInput(o.tracking_number || '')
+    setWeight(String(o.shipping_weight || 2))
+    setOffers([])
+  }
+
+  async function getOffers(order: Order) {
+    setQuoting(true); setOffers([])
+    try {
+      const res = await fetch('/api/boxtal/quote', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: order.id, weight: Number(weight) }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erreur cotation')
+      setOffers(data.offers || [])
+      if (!data.offers?.length) toast('Aucune offre pour cette adresse/ce poids')
+    } catch (e: any) { toast.error(e.message) }
+    finally { setQuoting(false) }
+  }
+
+  async function createShipment(order: Order, offer: Offer) {
+    if (!confirm(`Créer l'expédition ${offer.operatorLabel} — ${offer.serviceLabel} (${formatPrice(offer.priceTTC)}) ?\nUn bordereau facturé par Boxtal sera généré.`)) return
+    setShipping(true)
+    try {
+      const res = await fetch('/api/boxtal/ship', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: order.id, weight: Number(weight), operator: offer.operator, service: offer.service }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erreur expédition')
+      const patch = {
+        boxtal_ref: data.ref as string, carrier: offer.operatorLabel,
+        tracking_number: (data.tracking as string) || null,
+        shipping_weight: Number(weight), status: 'shipped',
+      }
+      setOrders(prev => prev.map(o => o.id === order.id ? { ...o, ...patch } : o))
+      setSelectedOrder(prev => prev ? { ...prev, ...patch } : null)
+      setOffers([])
+      toast.success('Expédition créée — bordereau prêt')
+      window.open(`/api/boxtal/label?order_id=${order.id}`, '_blank')
+    } catch (e: any) { toast.error(e.message) }
+    finally { setShipping(false) }
   }
 
   return (
@@ -133,7 +195,7 @@ export default function CommandesPage() {
                 {filtered.map(o => {
                   const { label, color } = ORDER_STATUSES[o.status] || { label: o.status, color: 'text-zinc-400 bg-zinc-400/10 border-zinc-400/20' }
                   return (
-                    <tr key={o.id} onClick={() => { setSelectedOrder(o); setTrackingInput(o.tracking_number || '') }}
+                    <tr key={o.id} onClick={() => selectOrder(o)}
                       className={`cursor-pointer hover:bg-[#1a1a1a] transition-colors ${selectedOrder?.id === o.id ? 'bg-[#1a1a1a]' : ''}`}>
                       <td className="px-6 py-4 text-sm font-mono text-white">{o.order_number}</td>
                       <td className="px-6 py-4">
@@ -194,6 +256,46 @@ export default function CommandesPage() {
                     className="bg-white text-black px-3 py-2 rounded-lg font-semibold">OK</button>
                 </div>
               </div>
+              <div className="pt-2 border-t border-[#1e1e1e]">
+                <p className="text-zinc-500 mb-2 flex items-center gap-1.5"><Truck size={12} /> Expédition Boxtal</p>
+                {selectedOrder.boxtal_ref ? (
+                  <div className="space-y-2">
+                    <p className="text-zinc-300">Bordereau créé{selectedOrder.carrier ? ` · ${selectedOrder.carrier}` : ''}</p>
+                    <p className="text-zinc-500 font-mono text-[11px] break-all">Réf : {selectedOrder.boxtal_ref}</p>
+                    <a href={`/api/boxtal/label?order_id=${selectedOrder.id}`} target="_blank" rel="noreferrer"
+                      className="flex items-center justify-center gap-2 bg-white text-black py-2 rounded-lg font-semibold hover:bg-zinc-200 transition-colors">
+                      <Printer size={14} /> Imprimer le bordereau
+                    </a>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex gap-2 items-center">
+                      <label className="text-zinc-500 whitespace-nowrap">Poids (kg)</label>
+                      <input value={weight} onChange={e => setWeight(e.target.value)} type="number" step="0.1" min="0.1"
+                        className="w-16 bg-[#1a1a1a] border border-[#2a2a2a] text-white px-2 py-1.5 rounded-lg outline-none focus:border-white/30" />
+                      <button onClick={() => getOffers(selectedOrder)} disabled={quoting}
+                        className="flex-1 bg-[#1a1a1a] text-white py-2 rounded-lg hover:bg-[#222] disabled:opacity-50 flex items-center justify-center gap-2">
+                        {quoting && <Loader2 size={13} className="animate-spin" />} Obtenir les tarifs
+                      </button>
+                    </div>
+                    {offers.length > 0 && (
+                      <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                        {offers.map((o, i) => (
+                          <button key={i} onClick={() => createShipment(selectedOrder, o)} disabled={shipping}
+                            className="w-full text-left bg-[#1a1a1a] hover:bg-[#222] border border-[#2a2a2a] rounded-lg p-2.5 disabled:opacity-50 transition-colors">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-white text-xs font-medium truncate">{o.operatorLabel}</span>
+                              <span className="text-white text-xs font-semibold whitespace-nowrap">{formatPrice(o.priceTTC)}</span>
+                            </div>
+                            <p className="text-zinc-500 text-[11px] truncate">{o.serviceLabel}{o.deliveryLabel ? ` · ${o.deliveryLabel}` : ''}</p>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="pt-2 border-t border-[#1e1e1e]">
                 <p className="text-zinc-500 mb-2">Changer le statut</p>
                 <div className="grid grid-cols-2 gap-1.5">
