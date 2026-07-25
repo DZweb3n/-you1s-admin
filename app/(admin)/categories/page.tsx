@@ -1,13 +1,14 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { Plus, Edit2, Trash2, Tag, Loader2, Upload, ImageIcon, X, ChevronUp, ChevronDown, Check } from 'lucide-react'
+import { Plus, Edit2, Trash2, Tag, Loader2, X, ChevronUp, ChevronDown, Check } from 'lucide-react'
 import Header from '@/components/Header'
 import toast from 'react-hot-toast'
 import { createClient } from '@/lib/supabase'
 import { slugify } from '@/lib/utils'
 
-const STORAGE_BUCKET = 'products'
-
+/* Une sous-catégorie = juste un nom. Le champ image est conservé à null
+   pour rester compatible avec les données existantes (le site vitrine ne
+   lit que le nom), mais il n'est plus éditable — le menu est typographique. */
 type Subcat = { name: string; image: string | null }
 
 type Category = {
@@ -15,7 +16,6 @@ type Category = {
   name: string
   slug: string
   description: string | null
-  image: string | null
   active: boolean
   sort_order: number
   subcats: Subcat[]
@@ -38,7 +38,6 @@ export default function CategoriesPage() {
   const [showNew, setShowNew] = useState(false)
   const [newForm, setNewForm] = useState({ name: '', description: '' })
   const [saving, setSaving] = useState(false)
-  const [uploading, setUploading] = useState<string | null>(null)
   const [subcatsSupported, setSubcatsSupported] = useState(true)
 
   const supabase = createClient()
@@ -48,13 +47,13 @@ export default function CategoriesPage() {
     // On tente avec subcats ; si la colonne n'existe pas encore (script 06 non lancé), on retombe sans
     let { data, error } = await supabase
       .from('categories')
-      .select('id, name, slug, description, image, active, sort_order, subcats')
+      .select('id, name, slug, description, active, sort_order, subcats')
       .order('sort_order', { ascending: true })
     if (error) {
       setSubcatsSupported(false)
       const retry = await supabase
         .from('categories')
-        .select('id, name, slug, description, image, active, sort_order')
+        .select('id, name, slug, description, active, sort_order')
         .order('sort_order', { ascending: true })
       data = retry.data as any
       error = retry.error
@@ -72,9 +71,8 @@ export default function CategoriesPage() {
     setEditForm({ name: cat.name, description: cat.description || '', subcats: cat.subcats.map(s => ({ ...s })) })
   }
 
-  /* ── FIX DU BUG : le slug ne change JAMAIS lors d'une modification.
-     Le site identifie les catégories par leur slug (URLs, filtres, mega menu).
-     L'ancien code régénérait le slug à chaque renommage → liens cassés côté site. ── */
+  /* ── Le slug ne change JAMAIS lors d'une modification : le site identifie
+     les catégories par leur slug (URLs, filtres, menu). ── */
   async function saveEdit(cat: Category) {
     if (!editForm.name.trim()) return toast.error('Le nom est obligatoire')
     setSaving(true)
@@ -94,29 +92,6 @@ export default function CategoriesPage() {
       : c))
     setEditing(null)
     toast.success('Catégorie mise à jour')
-  }
-
-  async function uploadImage(cat: Category, file: File) {
-    if (!file.type.startsWith('image/')) return toast.error("Ce fichier n'est pas une image")
-    if (file.size > 5 * 1024 * 1024) return toast.error('Image trop lourde (max 5 Mo)')
-    setUploading(cat.id)
-    const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
-    const path = `categories/${cat.slug}-${Date.now()}.${ext}`
-    const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type })
-    if (error) { setUploading(null); return toast.error(`Erreur upload : ${error.message}`) }
-    const { data: { publicUrl } } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path)
-    const { error: upErr } = await supabase.from('categories').update({ image: publicUrl }).eq('id', cat.id)
-    setUploading(null)
-    if (upErr) return toast.error(`Erreur de sauvegarde : ${upErr.message}`)
-    setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, image: publicUrl } : c))
-    toast.success('Image mise à jour')
-  }
-
-  async function removeImage(cat: Category) {
-    const { error } = await supabase.from('categories').update({ image: null }).eq('id', cat.id)
-    if (error) return toast.error(`Erreur : ${error.message}`)
-    setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, image: null } : c))
-    toast.success('Image retirée (le site utilise son visuel par défaut)')
   }
 
   async function deleteCategory(cat: Category) {
@@ -175,19 +150,6 @@ export default function CategoriesPage() {
       ;[arr[idx], arr[j]] = [arr[j], arr[idx]]
       return { ...p, subcats: arr }
     })
-  }
-  async function uploadSubcatImage(idx: number, cat: Category, file: File) {
-    if (!file.type.startsWith('image/')) return toast.error("Ce fichier n'est pas une image")
-    if (file.size > 5 * 1024 * 1024) return toast.error('Image trop lourde (max 5 Mo)')
-    setUploading(`${cat.id}-sub-${idx}`)
-    const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg'
-    const path = `categories/${cat.slug}-sub-${Date.now()}.${ext}`
-    const { error } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, { cacheControl: '3600', upsert: false, contentType: file.type })
-    if (error) { setUploading(null); return toast.error(`Erreur upload : ${error.message}`) }
-    const { data: { publicUrl } } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path)
-    setUploading(null)
-    setEditForm(p => ({ ...p, subcats: p.subcats.map((s, i) => i === idx ? { ...s, image: publicUrl } : s) }))
-    toast.success("Image ajoutée — clique Enregistrer pour valider")
   }
 
   return (
@@ -266,26 +228,16 @@ export default function CategoriesPage() {
                     </div>
                   </div>
 
-                  {/* Sous-catégories */}
+                  {/* Sous-catégories — nom + réordonner + supprimer (plus d'image) */}
                   {subcatsSupported && (
                     <div>
                       <label className="text-xs text-zinc-500 uppercase tracking-wider mb-2 block">Sous-catégories</label>
                       <div className="space-y-2">
                         {editForm.subcats.map((s, i) => (
                           <div key={i} className="flex items-center gap-2">
-                            <div className="w-9 h-9 rounded-lg overflow-hidden border border-[#2a2a2a] bg-[#1a1a1a] flex items-center justify-center flex-shrink-0">
-                              {s.image
-                                ? <img src={s.image} alt="" className="w-full h-full object-cover" />
-                                : <ImageIcon size={13} className="text-zinc-600" />}
-                            </div>
+                            <span className="w-6 text-center text-[11px] text-zinc-600 flex-shrink-0">{i + 1}</span>
                             <input value={s.name} onChange={e => renameSubcat(i, e.target.value)}
                               className="flex-1 bg-[#1a1a1a] border border-[#2a2a2a] text-white text-sm px-3 py-2 rounded-lg outline-none focus:border-white/30" />
-                            <label className={`w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-white cursor-pointer transition-all ${uploading === `${cat.id}-sub-${i}` ? 'opacity-50 pointer-events-none' : ''}`}
-                              title="Image de la sous-catégorie">
-                              {uploading === `${cat.id}-sub-${i}` ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
-                              <input type="file" accept="image/*" className="hidden"
-                                onChange={e => { const f = e.target.files?.[0]; if (f) uploadSubcatImage(i, cat, f); e.currentTarget.value = '' }} />
-                            </label>
                             <button onClick={() => moveSubcat(i, -1)} disabled={i === 0}
                               className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-white disabled:opacity-30 transition-all" title="Monter">
                               <ChevronUp size={13} />
@@ -326,11 +278,8 @@ export default function CategoriesPage() {
                 /* ─────────── MODE AFFICHAGE ─────────── */
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex items-center gap-4 min-w-0">
-                    {/* Image de la catégorie */}
-                    <div className="relative group/img w-14 h-14 rounded-xl overflow-hidden border border-[#2a2a2a] bg-[#1a1a1a] flex items-center justify-center flex-shrink-0">
-                      {cat.image
-                        ? <img src={cat.image} alt="" className="w-full h-full object-cover" />
-                        : <Tag size={15} className="text-zinc-500" />}
+                    <div className="w-11 h-11 rounded-xl border border-[#2a2a2a] bg-[#1a1a1a] flex items-center justify-center flex-shrink-0">
+                      <Tag size={15} className="text-zinc-500" />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -338,7 +287,7 @@ export default function CategoriesPage() {
                         <span className="text-[10px] text-zinc-600 font-mono">/{cat.slug}</span>
                         {!cat.active && <span className="text-[10px] text-zinc-500 px-1.5 py-0.5 bg-[#1e1e1e] rounded">Inactif</span>}
                       </div>
-                      <p className="text-xs text-zinc-500 mt-0.5 truncate">{cat.description}</p>
+                      {cat.description && <p className="text-xs text-zinc-500 mt-0.5 truncate">{cat.description}</p>}
                       {cat.subcats.length > 0 && (
                         <p className="text-[11px] text-zinc-600 mt-1 truncate">
                           {cat.subcats.map(s => s.name).join(' · ')}
@@ -347,29 +296,17 @@ export default function CategoriesPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    <label className={`flex items-center gap-1.5 text-xs text-zinc-300 bg-[#1a1a1a] border border-[#2a2a2a] px-3 py-2 rounded-lg hover:text-white hover:border-[#3a3a3a] cursor-pointer transition-all ${uploading === cat.id ? 'opacity-50 pointer-events-none' : ''}`}>
-                      {uploading === cat.id ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
-                      Image
-                      <input type="file" accept="image/*" className="hidden"
-                        onChange={e => { const f = e.target.files?.[0]; if (f) uploadImage(cat, f); e.currentTarget.value = '' }} />
-                    </label>
-                    {cat.image && (
-                      <button onClick={() => removeImage(cat)}
-                        className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-red-400 transition-all"
-                        title="Retirer l'image">
-                        <X size={13} />
-                      </button>
-                    )}
                     <button onClick={() => toggleActive(cat)}
-                      className={`relative w-9 h-5 rounded-full transition-colors ${cat.active ? 'bg-white' : 'bg-[#2a2a2a]'}`}>
+                      className={`relative w-9 h-5 rounded-full transition-colors ${cat.active ? 'bg-white' : 'bg-[#2a2a2a]'}`}
+                      title={cat.active ? 'Visible sur le site' : 'Masquée'}>
                       <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-black transition-transform ${cat.active ? 'translate-x-4' : 'translate-x-0.5'}`} />
                     </button>
                     <button onClick={() => startEdit(cat)}
-                      className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-white hover:border-[#333] transition-all">
+                      className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-white hover:border-[#333] transition-all" title="Modifier">
                       <Edit2 size={13} />
                     </button>
                     <button onClick={() => deleteCategory(cat)}
-                      className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-red-400 hover:border-red-400/30 transition-all">
+                      className="w-8 h-8 rounded-lg bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-zinc-400 hover:text-red-400 hover:border-red-400/30 transition-all" title="Supprimer">
                       <Trash2 size={13} />
                     </button>
                   </div>
