@@ -43,29 +43,33 @@ export async function POST(req: Request) {
       .filter(Boolean)
       .join(', ') || 'Vetements / chaussures'
 
+  // URL de callback (Boxtal y pousse le n° de suivi + l'état → /api/boxtal/push)
+  const pushBase =
+    process.env.BOXTAL_PUSH_URL ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}/api/boxtal/push` : 'https://you-1s.com/api/boxtal/push')
+  const pushToken = process.env.BOXTAL_PUSH_TOKEN || ''
+  const pushUrl = `${pushBase}?ref=${encodeURIComponent(orderId)}${pushToken ? `&token=${encodeURIComponent(pushToken)}` : ''}`
+
   try {
     const shipment = await createShipment(addr, weight, operator, service, {
       email: order.customer_email,
       description,
       value: Number(order.subtotal ?? order.total ?? 0),
+      pushUrl,
     })
 
     await supabase
       .from('orders')
       .update({
         boxtal_ref: shipment.ref,
+        boxtal_label_url: shipment.labelUrl || null,
         carrier: operator,
         shipping_weight: weight,
-        tracking_number: shipment.tracking || null,
         status: 'shipped',
       })
       .eq('id', orderId)
 
-    return NextResponse.json({
-      ref: shipment.ref,
-      tracking: shipment.tracking,
-      state: shipment.state,
-    })
+    return NextResponse.json({ ref: shipment.ref, labelUrl: shipment.labelUrl })
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || 'Erreur création expédition Boxtal.' }, { status: 502 })
   }

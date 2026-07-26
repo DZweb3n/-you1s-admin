@@ -22,14 +22,14 @@ export async function GET(req: Request) {
   const supabase = createAdminClient()
   const { data: order, error } = await supabase
     .from('orders')
-    .select('order_number, boxtal_ref')
+    .select('order_number, boxtal_ref, boxtal_label_url')
     .eq('id', orderId)
     .single()
   if (error || !order) return new NextResponse('Commande introuvable.', { status: 404 })
   if (!order.boxtal_ref) return new NextResponse('Aucune expédition Boxtal pour cette commande.', { status: 404 })
 
   try {
-    const pdf = await getLabelPdf(order.boxtal_ref)
+    const pdf = await getLabelPdf(order.boxtal_ref, order.boxtal_label_url || undefined)
     return new NextResponse(new Uint8Array(pdf), {
       status: 200,
       headers: {

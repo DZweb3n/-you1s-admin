@@ -2,8 +2,10 @@ import { XMLParser } from 'fast-xml-parser'
 
 /**
  * Client Boxtal (API v1 « envoimoinscher ») — SERVEUR UNIQUEMENT.
- * Flux : cotation (tarifs transporteurs) → order (création de l'expédition)
- * → bordereau PDF. Les identifiants ne quittent jamais le serveur.
+ * Conforme à la spécification OpenAPI officielle (paramètres en FRANÇAIS :
+ * expediteur.*, destinataire.*, code_contenu, collecte…).
+ * Flux : GET /cotation (offres) → POST /order (référence + URL bordereau).
+ * Le suivi arrive ensuite via le callback url_push (/api/boxtal/push).
  *
  * Voir BOXTAL-SETUP.md pour la configuration (compte + variables d'env).
  */
@@ -11,16 +13,15 @@ import { XMLParser } from 'fast-xml-parser'
 const ENV = (process.env.BOXTAL_ENV || 'test').toLowerCase()
 const IS_PROD = ENV === 'prod' || ENV === 'production'
 
-/* Serveurs API (le test renvoie de fausses expéditions, gratuites). */
 const API_BASE = IS_PROD
-  ? 'https://www.envoimoinscher.com'
-  : 'https://test.envoimoinscher.com'
+  ? 'https://www.envoimoinscher.com/api/v1'
+  : 'https://test.envoimoinscher.com/api/v1'
 
-/* Serveur des documents (bordereaux PDF). Surchargable au besoin. */
+/* Serveur des bordereaux (fallback si l'URL fournie par Boxtal manque). */
 const DOC_BASE =
   process.env.BOXTAL_DOC_SERVER ||
   (IS_PROD
-    ? 'https://documents.envoimoinscher.com/documents'
+    ? 'https://www.envoimoinscher.com/documents'
     : 'https://test.envoimoinscher.com/documents')
 
 const parser = new XMLParser({ ignoreAttributes: true, trimValues: true })
@@ -36,28 +37,28 @@ function authHeader(): string {
 }
 
 function commonHeaders(): Record<string, string> {
-  return {
-    Authorization: authHeader(),
-    'Accept-Language': 'en-US',
-    'Api-Version': '1.3.7',
-  }
+  return { Authorization: authHeader(), 'Accept-Language': 'fr-FR' }
 }
 
-/* Expéditeur (la boutique) — construit à partir des variables d'env. */
-function shipperParams(): Record<string, string> {
+function senderType(): 'entreprise' | 'particulier' {
+  const t = (process.env.BOXTAL_SENDER_TYPE || 'entreprise').toLowerCase()
+  return t === 'particulier' || t === 'individual' ? 'particulier' : 'entreprise'
+}
+
+/* Expéditeur (la boutique) — paramètres français `expediteur.*`. */
+function expediteurParams(): Record<string, string> {
   const p: Record<string, string> = {
-    'shipper.country': process.env.BOXTAL_SENDER_COUNTRY || 'FR',
-    'shipper.zipcode': process.env.BOXTAL_SENDER_ZIP || '',
-    'shipper.city': process.env.BOXTAL_SENDER_CITY || '',
-    'shipper.address': process.env.BOXTAL_SENDER_ADDRESS || '',
-    'shipper.type': process.env.BOXTAL_SENDER_TYPE || 'company',
-    'shipper.title': process.env.BOXTAL_SENDER_TITLE || 'M',
-    'shipper.firstname': process.env.BOXTAL_SENDER_FIRSTNAME || '',
-    'shipper.lastname': process.env.BOXTAL_SENDER_LASTNAME || '',
-    'shipper.email': process.env.BOXTAL_SENDER_EMAIL || '',
-    'shipper.phone': (process.env.BOXTAL_SENDER_PHONE || '').replace(/\s+/g, ''),
+    'expediteur.pays': process.env.BOXTAL_SENDER_COUNTRY || 'FR',
+    'expediteur.code_postal': process.env.BOXTAL_SENDER_ZIP || '',
+    'expediteur.ville': process.env.BOXTAL_SENDER_CITY || '',
+    'expediteur.adresse': process.env.BOXTAL_SENDER_ADDRESS || '',
+    'expediteur.type': senderType(),
+    'expediteur.prenom': process.env.BOXTAL_SENDER_FIRSTNAME || '',
+    'expediteur.nom': process.env.BOXTAL_SENDER_LASTNAME || '',
+    'expediteur.email': process.env.BOXTAL_SENDER_EMAIL || '',
+    'expediteur.tel': (process.env.BOXTAL_SENDER_PHONE || '').replace(/\s+/g, ''),
   }
-  if (process.env.BOXTAL_SENDER_COMPANY) p['shipper.societe'] = process.env.BOXTAL_SENDER_COMPANY
+  if (process.env.BOXTAL_SENDER_COMPANY) p['expediteur.societe'] = process.env.BOXTAL_SENDER_COMPANY
   return p
 }
 
@@ -70,28 +71,27 @@ export type ShippingAddress = {
   country?: string
 }
 
-/* Destinataire — construit à partir de l'adresse de livraison de la commande. */
-function recipientParams(addr: ShippingAddress, email?: string): Record<string, string> {
+/* Destinataire — paramètres français `destinataire.*` (à partir de la commande). */
+function destinataireParams(addr: ShippingAddress, email?: string): Record<string, string> {
   const full = String(addr.name || '').trim()
   const parts = full.split(/\s+/)
-  const firstname = parts.length > 1 ? parts.slice(0, -1).join(' ') : full || 'Client'
-  const lastname = parts.length > 1 ? parts[parts.length - 1] : full || 'Client'
+  const prenom = parts.length > 1 ? parts.slice(0, -1).join(' ') : full || 'Client'
+  const nom = parts.length > 1 ? parts[parts.length - 1] : full || 'Client'
   return {
-    'recipient.country': (addr.country || 'FR').toUpperCase(),
-    'recipient.zipcode': addr.zip || '',
-    'recipient.city': addr.city || '',
-    'recipient.address': addr.address || '',
-    'recipient.type': 'individual',
-    'recipient.title': 'M',
-    'recipient.firstname': firstname,
-    'recipient.lastname': lastname,
-    'recipient.email': email || process.env.BOXTAL_SENDER_EMAIL || '',
-    'recipient.phone': (addr.phone || '0600000000').replace(/\s+/g, ''),
+    'destinataire.pays': (addr.country || 'FR').toUpperCase(),
+    'destinataire.code_postal': addr.zip || '',
+    'destinataire.ville': addr.city || '',
+    'destinataire.adresse': addr.address || '',
+    'destinataire.type': 'particulier',
+    'destinataire.prenom': prenom,
+    'destinataire.nom': nom,
+    'destinataire.email': email || process.env.BOXTAL_SENDER_EMAIL || '',
+    'destinataire.tel': (addr.phone || '0600000000').replace(/\s+/g, ''),
   }
 }
 
-/* Colis : poids (kg) + dimensions par défaut (cm), surchargeables par env. */
-function parcelParams(weightKg: number): Record<string, string> {
+/* Colis : poids (kg) + dimensions par défaut (cm). Un seul colis (colis_1). */
+function colisParams(weightKg: number): Record<string, string> {
   const w = Math.max(0.1, Number(weightKg) || Number(process.env.BOXTAL_DEFAULT_WEIGHT) || 2)
   return {
     'colis_1.poids': String(w),
@@ -101,8 +101,8 @@ function parcelParams(weightKg: number): Record<string, string> {
   }
 }
 
-function contentParams(): Record<string, string> {
-  return { content_code: process.env.BOXTAL_CONTENT_CODE || '10120' }
+function codeContenu(): string {
+  return process.env.BOXTAL_CONTENT_CODE || '10120'
 }
 
 /** Une offre transporteur renvoyée par la cotation. */
@@ -124,30 +124,30 @@ function asArray<T>(v: T | T[] | undefined | null): T[] {
 }
 
 function checkErrors(parsed: any): void {
-  // Boxtal renvoie <error><message>…</message></error> en cas de refus.
-  const err = parsed?.error || parsed?.cotation?.error || parsed?.order?.error
+  // Boxtal renvoie <error><code/><message/></error> en cas de refus (400/401).
+  const err = parsed?.error
   if (err) {
     const msg = err?.message || (typeof err === 'string' ? err : 'Requête Boxtal refusée')
     throw new Error(String(msg))
   }
 }
 
-/** Cotation : renvoie les offres transporteurs commandables (mode COM). */
+/** Cotation : offres transporteurs en LIVRAISON À DOMICILE (relais exclus). */
 export async function getQuotes(
   addr: ShippingAddress,
   weightKg: number,
   email?: string
 ): Promise<BoxtalOffer[]> {
   const params = {
-    ...shipperParams(),
-    ...recipientParams(addr, email),
-    ...parcelParams(weightKg),
-    ...contentParams(),
+    ...expediteurParams(),
+    ...destinataireParams(addr, email),
+    ...colisParams(weightKg),
+    code_contenu: codeContenu(),
   }
   const qs = new URLSearchParams(params).toString()
-  const res = await fetch(`${API_BASE}/api/v1/cotation?${qs}`, { headers: commonHeaders() })
+  const res = await fetch(`${API_BASE}/cotation?${qs}`, { headers: commonHeaders() })
   const text = await res.text()
-  if (!res.ok && res.status !== 400) {
+  if (!res.ok && res.status !== 400 && res.status !== 401) {
     throw new Error(`Boxtal cotation : HTTP ${res.status}`)
   }
   const parsed = parser.parse(text)
@@ -156,7 +156,13 @@ export async function getQuotes(
   const offers = asArray<any>(parsed?.cotation?.shipment?.offer)
   const out: BoxtalOffer[] = []
   for (const o of offers) {
-    if (o?.mode !== 'COM') continue // COM = commandable directement
+    // On écarte les offres qui exigent un point relais (dépôt/retrait) —
+    // le checkout ne collecte qu'une adresse domicile.
+    const mand = asArray<any>(o?.mandatory_information?.parameter ?? o?.mandatory_information)
+    const needsRelay = mand.some((m) => String(m?.code || '').toLowerCase().includes('pointrelais'))
+    const deliveryCode = String(o?.delivery?.type?.code || '')
+    if (needsRelay || deliveryCode === 'PICKUP_POINT') continue
+
     const price = o.price || {}
     out.push({
       operator: String(o.operator?.code ?? ''),
@@ -170,7 +176,6 @@ export async function getQuotes(
       deliveryDate: String(o.delivery?.date ?? ''),
     })
   }
-  // Moins cher d'abord
   out.sort((a, b) => a.priceTTC - b.priceTTC)
   return out
 }
@@ -178,88 +183,61 @@ export async function getQuotes(
 /** Résultat d'une création d'expédition. */
 export type BoxtalShipment = {
   ref: string
-  tracking: string
   labelUrl: string
-  state: string
 }
 
-/** Crée l'expédition (order) puis récupère le suivi. Renvoie la référence Boxtal. */
+/** Crée l'expédition (POST /order). Renvoie la référence + l'URL du bordereau. */
 export async function createShipment(
   addr: ShippingAddress,
   weightKg: number,
   operator: string,
   service: string,
-  opts?: { email?: string; description?: string; value?: number }
+  opts?: { email?: string; description?: string; value?: number; pushUrl?: string }
 ): Promise<BoxtalShipment> {
   const today = new Date().toISOString().slice(0, 10)
   const params: Record<string, string> = {
-    ...shipperParams(),
-    ...recipientParams(addr, opts?.email),
-    ...parcelParams(weightKg),
-    ...contentParams(),
+    ...expediteurParams(),
+    ...destinataireParams(addr, opts?.email),
+    ...colisParams(weightKg),
+    code_contenu: codeContenu(),
     operator,
     service,
-    collection_date: today,
-    'assurance.selection': 'false',
+    collecte: today,
     'colis.description': (opts?.description || 'Vetements / chaussures').slice(0, 60),
+    url_push: opts?.pushUrl || 'https://you-1s.com/api/boxtal/push',
+    'assurance.selection': 'false',
   }
   if (opts?.value != null) params['colis.valeur'] = String(opts.value)
 
-  const res = await fetch(`${API_BASE}/api/v1/order`, {
+  const res = await fetch(`${API_BASE}/order`, {
     method: 'POST',
     headers: { ...commonHeaders(), 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(params).toString(),
   })
   const text = await res.text()
-  if (!res.ok && res.status !== 400) {
+  if (!res.ok && res.status !== 400 && res.status !== 401) {
     throw new Error(`Boxtal order : HTTP ${res.status}`)
   }
   const parsed = parser.parse(text)
   checkErrors(parsed)
 
-  const ref = String(parsed?.order?.shipment?.reference ?? '').trim()
+  const shipment = parsed?.order?.shipment || {}
+  const ref = String(shipment.reference ?? '').trim()
   if (!/^[0-9a-zA-Z]{20}$/.test(ref)) {
     throw new Error("Boxtal n'a pas renvoyé de référence d'expédition valide.")
   }
+  const labelUrl = String(asArray<any>(shipment.labels?.label)[0] ?? '')
 
-  // Suivi + URL du bordereau (best-effort, ne bloque pas la création).
-  let tracking = '',
-    labelUrl = '',
-    state = ''
-  try {
-    const info = await getShipmentInfo(ref)
-    tracking = info.tracking
-    labelUrl = info.labelUrl
-    state = info.state
-  } catch {
-    /* les infos peuvent n'être disponibles qu'après quelques secondes */
-  }
-
-  return { ref, tracking, labelUrl, state }
+  return { ref, labelUrl }
 }
 
-/** Infos d'une expédition : numéro de suivi transporteur, état, URL bordereau. */
-export async function getShipmentInfo(
-  ref: string
-): Promise<{ tracking: string; labelUrl: string; labelAvailable: boolean; state: string }> {
-  const res = await fetch(`${API_BASE}/api/v1/order_status/${encodeURIComponent(ref)}/informations`, {
-    headers: commonHeaders(),
-  })
-  const text = await res.text()
-  const parsed = parser.parse(text)
-  const order = parsed?.order || {}
-  return {
-    tracking: String(order.carrier_reference ?? ''),
-    labelUrl: String(order.label_url ?? ''),
-    labelAvailable: String(order.label_available ?? '') === 'true' || order.label_available === true,
-    state: String(order.state ?? ''),
-  }
-}
-
-/** Télécharge le bordereau (waybill) au format PDF. Renvoie les octets bruts. */
-export async function getLabelPdf(ref: string): Promise<Buffer> {
-  const qs = new URLSearchParams({ type: 'bordereau', envoi: ref }).toString()
-  const res = await fetch(`${DOC_BASE}?${qs}`, { headers: commonHeaders() })
+/** Télécharge le bordereau (PDF). Utilise l'URL Boxtal si fournie, sinon reconstruit. */
+export async function getLabelPdf(ref: string, labelUrl?: string): Promise<Buffer> {
+  const url =
+    labelUrl && /^https?:\/\//i.test(labelUrl)
+      ? labelUrl
+      : `${DOC_BASE}?${new URLSearchParams({ type: 'bordereau', envoi: ref }).toString()}`
+  const res = await fetch(url, { headers: commonHeaders() })
   if (!res.ok) throw new Error(`Boxtal bordereau : HTTP ${res.status}`)
   const buf = Buffer.from(await res.arrayBuffer())
   // Un bordereau non prêt renvoie parfois du XML d'erreur au lieu d'un PDF.

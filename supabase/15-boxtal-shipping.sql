@@ -13,6 +13,9 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS carrier TEXT;
 -- Poids du colis (kg) utilisé pour la cotation/l'expédition.
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_weight NUMERIC(6,2);
 
+-- URL du bordereau PDF renvoyée par Boxtal (récupérée avec auth pour l'impression).
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS boxtal_label_url TEXT;
+
 -- Index pour retrouver une commande depuis sa référence Boxtal.
 CREATE INDEX IF NOT EXISTS idx_orders_boxtal_ref ON orders (boxtal_ref);
 
