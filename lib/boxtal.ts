@@ -215,11 +215,17 @@ export async function createShipment(
     body: new URLSearchParams(params).toString(),
   })
   const text = await res.text()
-  if (!res.ok && res.status !== 400 && res.status !== 401) {
+  const parsed = parser.parse(text)
+  checkErrors(parsed) // remonte <error><message> renvoyé par Boxtal, s'il existe
+  if (!res.ok) {
+    if (res.status === 403) {
+      throw new Error(
+        'Boxtal refuse la création (403) : le compte doit être configuré en « paiement différé par prélèvement » ' +
+          '(ou le plafond de paiement différé est dépassé). Active-le dans ton espace Boxtal, puis réessaie.'
+      )
+    }
     throw new Error(`Boxtal order : HTTP ${res.status}`)
   }
-  const parsed = parser.parse(text)
-  checkErrors(parsed)
 
   const shipment = parsed?.order?.shipment || {}
   const ref = String(shipment.reference ?? '').trim()
